@@ -1,0 +1,25 @@
+/* Локальная тема страницы паспорта (не трогаем глобальный light/dark root) */
+.passport-hf-root {
+  --ph-bg0: #07080c;
+  --ph-bg1: #12151c;
+  --ph-ink: #f4f1ea;
+  --ph-muted: #9a958a;
+  --ph-accent: #d4a853;
+  --ph-accent-dim: #8f6b2c;
+  --ph-card: rgba(255, 255, 255, 0.04);
+  --ph-border: rgba(255, 255, 255, 0.09);
+  --ph-glow: rgba(212, 168, 83, 0.12);
+  font-family: var(--font-passport), system-ui, sans-serif;
+  min-height: 100vh;
+  color: var(--ph-ink);
+  background-color: var(--ph-bg0);
+  background-image:
+    radial-gradient(ellipse 120% 80% at 50% -30%, var(--ph-glow), transparent 55%),
+    radial-gradient(ellipse 80% 50% at 100% 0%, rgba(80, 120, 200, 0.08), transparent 45%),
+    linear-gradient(180deg, var(--ph-bg0) 0%, var(--ph-bg1) 100%);
+}
+
+.passport-hf-root ::selection {
+  background: rgba(212, 168, 83, 0.35);
+  color: #0a0a0a;
+}
