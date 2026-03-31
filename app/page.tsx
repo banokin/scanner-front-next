@@ -267,12 +267,7 @@ export default function PassportHfPage() {
                   Данные паспорта
                 </h2>
               </div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 shadow-sm">
-                Модель
-                <code className="rounded-md bg-white px-2 py-0.5 font-medium text-blue-600 ring-1 ring-slate-200/80">
-                  {scanResult.model}
-                </code>
-              </span>
+             
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               {dataEntries.map(({ key, label, value }) => (
