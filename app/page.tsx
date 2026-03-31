@@ -8,42 +8,21 @@ import {
   FileText,
   Loader2,
   Scan,
-  Send,
   Upload,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-const PASSPORT_HF_API_URL = `${API_BASE_URL}/scan-passport`;
-const PASSPORT_TO_CONTRACT_HF_API_URL = `${API_BASE_URL}/scan-passport-to-contract-hf`;
-
-const HF_SEC = Number(process.env.NEXT_PUBLIC_HF_REQUEST_TIMEOUT_SEC ?? 90);
-/** Согласовано со Streamlit: connect + read */
-const FETCH_TIMEOUT_MS = (10 + HF_SEC + 45) * 1000;
-const DOWNLOAD_TIMEOUT_MS = 120_000;
-
-type PassportData = {
-  issuing_authority: string;
-  issue_date: string;
-  department_code: string;
-  passport_series: string;
-  passport_number: string;
-  surname: string;
-  name: string;
-  patronymic: string;
-  gender: string;
-  birth_date: string;
-  birth_place: string;
-  confidence_note: string;
-};
-
-type ScanResponse = {
-  ok: boolean;
-  model: string;
-  data: PassportData;
-  raw_text: string;
-};
+import {
+  buildContractFromPassport,
+  type PassportData,
+  scanPassport,
+  type ScanResponse,
+} from "@/lib/api/passport";
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+]);
 
 const FIELD_LABELS: Record<keyof PassportData, string> = {
   issuing_authority: "Кем выдан",
@@ -60,31 +39,9 @@ const FIELD_LABELS: Record<keyof PassportData, string> = {
   confidence_note: "Примечание модели",
 };
 
-async function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-  timeoutMs: number,
-): Promise<Response> {
-  const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    return await fetch(input, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(id);
-  }
-}
-
-function formatApiDetail(detail: unknown): string {
-  if (typeof detail === "string") return detail;
-  try {
-    return JSON.stringify(detail, null, 2);
-  } catch {
-    return String(detail);
-  }
-}
-
 export default function PassportHfPage() {
   const [file, setFile] = useState<File | null>(null);
+  const [uploadSnapshot, setUploadSnapshot] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResponse | null>(null);
   const [contractBlob, setContractBlob] = useState<Blob | null>(null);
@@ -97,6 +54,7 @@ export default function PassportHfPage() {
 
   const resetForNewFile = useCallback(() => {
     setScanResult(null);
+    setUploadSnapshot(null);
     setContractBlob(null);
     setContractFilename(null);
     setError(null);
@@ -107,6 +65,10 @@ export default function PassportHfPage() {
   const onFileChosen = useCallback(
     (f: File | null) => {
       if (!f) return;
+      if (!ALLOWED_IMAGE_MIME_TYPES.has(f.type)) {
+        setError("Поддерживаются только PNG, JPG, JPEG и WEBP.");
+        return;
+      }
       setFile(f);
       resetForNewFile();
     },
@@ -118,7 +80,7 @@ export default function PassportHfPage() {
       e.preventDefault();
       setDragOver(false);
       const f = e.dataTransfer.files[0];
-      if (f && f.type.startsWith("image/")) onFileChosen(f);
+      if (f) onFileChosen(f);
     },
     [onFileChosen],
   );
@@ -129,104 +91,30 @@ export default function PassportHfPage() {
     setScanning(true);
     setContractBlob(null);
     setContractFilename(null);
-    const form = new FormData();
-    form.append("file", file);
     try {
-      const response = await fetchWithTimeout(
-        PASSPORT_HF_API_URL,
-        { method: "POST", body: form },
-        FETCH_TIMEOUT_MS,
-      );
-      if (response.ok) {
-        const data = (await response.json()) as ScanResponse;
-        setScanResult(data);
-      } else {
-        setScanResult(null);
-        let msg = `Ошибка API: ${response.status}`;
-        try {
-          const errBody = (await response.json()) as { detail?: unknown };
-          if (errBody.detail !== undefined) {
-            msg += `\n${formatApiDetail(errBody.detail)}`;
-          }
-        } catch {
-          msg += `\n${await response.text()}`;
-        }
-        setError(msg);
-      }
+      const data = await scanPassport(file);
+      setScanResult(data);
+      setUploadSnapshot(file);
     } catch (e: unknown) {
       setScanResult(null);
-      if (e instanceof Error && e.name === "AbortError") {
-        setError(
-          `Превышено время ожидания (бэкенд HF ~${HF_SEC} с). Убедитесь, что uvicorn запущен; при перегрузке HF увеличьте HF_REQUEST_TIMEOUT_SEC.`,
-        );
-      } else if (e instanceof TypeError) {
-        setError("Не удалось подключиться к FastAPI.");
-      } else {
-        setError(e instanceof Error ? e.message : "Неизвестная ошибка");
-      }
+      setUploadSnapshot(null);
+      setError(e instanceof Error ? e.message : "Неизвестная ошибка");
     } finally {
       setScanning(false);
     }
   };
 
   const handleBuildContract = async () => {
-    if (!file || !scanResult) return;
+    const sourceFile = uploadSnapshot ?? file;
+    if (!sourceFile || !scanResult) return;
     setError(null);
     setBuildingContract(true);
-    const form = new FormData();
-    form.append("file", file);
     try {
-      const response = await fetchWithTimeout(
-        PASSPORT_TO_CONTRACT_HF_API_URL,
-        { method: "POST", body: form },
-        FETCH_TIMEOUT_MS,
-      );
-      if (!response.ok) {
-        let msg = `Ошибка API: ${response.status}`;
-        try {
-          const errBody = (await response.json()) as { detail?: unknown };
-          if (errBody.detail !== undefined) {
-            msg += `\n${formatApiDetail(errBody.detail)}`;
-          }
-        } catch {
-          msg += `\n${await response.text()}`;
-        }
-        setError(msg);
-        return;
-      }
-      const payload = (await response.json()) as {
-        download_url?: string;
-        generated_filename?: string;
-      };
-      const downloadUrl = payload.download_url;
-      if (!downloadUrl) {
-        setError("API не вернул ссылку для скачивания договора.");
-        return;
-      }
-      const fileResponse = await fetchWithTimeout(
-        `${API_BASE_URL}${downloadUrl}`,
-        { method: "GET" },
-        DOWNLOAD_TIMEOUT_MS,
-      );
-      if (!fileResponse.ok) {
-        setError(`Ошибка скачивания файла: ${fileResponse.status}`);
-        return;
-      }
-      const blob = await fileResponse.blob();
-      setContractBlob(blob);
-      setContractFilename(
-        payload.generated_filename ?? downloadUrl.split("/").pop() ?? "dogovor.docx",
-      );
+      const result = await buildContractFromPassport(sourceFile);
+      setContractBlob(result.blob);
+      setContractFilename(result.filename);
     } catch (e: unknown) {
-      if (e instanceof Error && e.name === "AbortError") {
-        setError(
-          `Превышено время ожидания (HF ~${HF_SEC} с). Повторите или увеличьте HF_REQUEST_TIMEOUT_SEC.`,
-        );
-      } else if (e instanceof TypeError) {
-        setError("Не удалось подключиться к FastAPI.");
-      } else {
-        setError(e instanceof Error ? e.message : "Неизвестная ошибка");
-      }
+      setError(e instanceof Error ? e.message : "Неизвестная ошибка");
     } finally {
       setBuildingContract(false);
     }
@@ -266,41 +154,7 @@ export default function PassportHfPage() {
         <div className="absolute bottom-32 left-1/4 h-72 w-72 rounded-full bg-sky-100/40 blur-3xl" />
       </div>
 
-      <header className="sticky top-0 z-20 border-b border-slate-200/90 bg-white/85 backdrop-blur-md">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3.5 sm:px-6">
-          <div className="flex items-center gap-3">
-            <span className="flex size-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-600/25">
-              <Send className="size-[22px]" aria-hidden strokeWidth={2} />
-            </span>
-            <div className="leading-tight">
-              <span className="block text-base font-bold tracking-tight text-slate-900 sm:text-lg">
-               Создание договора по скану
-              </span>
-              <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
-                OCR · договоры
-              </span>
-            </div>
-          </div>
-          <p className="hidden text-right text-sm text-slate-600 sm:block">
-            Скан паспорта и выгрузка .docx
-          </p>
-        </div>
-      </header>
-
       <div className="relative mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
-        <header className="mb-10 text-center sm:mb-14">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-blue-600">
-            Сервис
-          </p>
-          <h1 className="text-balance font-bold tracking-tight text-slate-900 text-3xl sm:text-4xl lg:text-[2.5rem] lg:leading-tight">
-            Скан паспорта
-          </h1>
-          <p className="mx-auto mt-4 max-w-xl text-pretty text-sm leading-relaxed text-slate-600 sm:text-base">
-            Загрузите фото разворота — поля извлекутся автоматически. После успешного
-            скана можно сформировать договор в формате .docx.
-          </p>
-        </header>
-
         <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-9">
           <div className="mb-5 flex items-center gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 ring-1 ring-slate-200/90">
