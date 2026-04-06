@@ -2,7 +2,18 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #000000;
+  --ph-ink: #000000;
+  --ph-muted: #000000;
+  --ph-faint: #000000;
+  --ph-accent: #1d4ed8;
+  --ph-accent-dim: #2563eb;
+  --ph-border: #d1d5db;
+  --ph-drop-border: #cbd5e1;
+  --ph-drop-border-hover: #94a3b8;
+  --ph-surface: #f8fafc;
+  --ph-glow: #dbeafe;
+  --ph-pre-bg: #f8fafc;
 }
 
 @theme inline {
