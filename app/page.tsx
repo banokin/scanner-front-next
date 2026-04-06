@@ -352,7 +352,7 @@ export default function PassportHfPage() {
             {scanning && (
               <p className="flex items-center gap-2 text-sm text-black">
                 <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--ph-accent)]" />
-                Выполняю OCR через Qwen...
+                Выполняю анализ документов...
               </p>
             )}
           </div>
