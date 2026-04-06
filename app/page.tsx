@@ -263,7 +263,7 @@ export default function PassportHfPage() {
       <div className="relative mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
         <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-9">
           <h1 className="mb-6 text-xl font-semibold tracking-tight text-black">
-            Сканирование 3 документов в единый JSON
+            Сканирование 3 документов 
           </h1>
 
           <div className="space-y-5">
@@ -352,7 +352,7 @@ export default function PassportHfPage() {
             {scanning && (
               <p className="flex items-center gap-2 text-sm text-black">
                 <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--ph-accent)]" />
-                Выполняю анализ документов...
+                Сканирую документы...
               </p>
             )}
           </div>
