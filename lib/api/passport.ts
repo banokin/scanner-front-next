@@ -2,6 +2,8 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const PASSPORT_HF_API_URL = `${API_BASE_URL}/scan-passport`;
 const PASSPORT_TO_CONTRACT_HF_API_URL = `${API_BASE_URL}/scan-passport-to-contract-hf`;
+const UNIFIED_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified`;
+const UNIFIED_CONTRACT_API_URL = `${API_BASE_URL}/unified-json-to-contract`;
 
 const HF_SEC = Number(process.env.NEXT_PUBLIC_HF_REQUEST_TIMEOUT_SEC ?? 90);
 const FETCH_TIMEOUT_MS = (10 + HF_SEC + 45) * 1000;
@@ -32,6 +34,44 @@ export type ScanResponse = {
 export type BuildContractResponse = {
   blob: Blob;
   filename: string;
+};
+
+export type PassportRegistrationData = {
+  region: string;
+  city: string;
+  settlement: string;
+  street: string;
+  house: string;
+  building: string;
+  apartment: string;
+  registration_date: string;
+  confidence_note: string;
+};
+
+export type EgrnExtractData = {
+  cadastral_number: string;
+  object_type: string;
+  address: string;
+  area_sq_m: string;
+  ownership_type: string;
+  right_holders: string[];
+  extract_date: string;
+  confidence_note: string;
+};
+
+export type UnifiedScanResponse = {
+  ok: boolean;
+  model: string;
+  data: {
+    passport_main: PassportData;
+    passport_registration: PassportRegistrationData;
+    egrn_extract: EgrnExtractData;
+  };
+  raw_text: {
+    passport_main: string;
+    passport_registration: string;
+    egrn_extract: string;
+  };
 };
 
 export type ApiError = Error & {
@@ -113,6 +153,34 @@ export async function scanPassport(file: File): Promise<ScanResponse> {
   }
 }
 
+export async function scanDocumentsUnified(files: {
+  passportMain: File;
+  passportRegistration: File;
+  egrnExtract: File;
+}): Promise<UnifiedScanResponse> {
+  const form = new FormData();
+  form.append("passport_main", files.passportMain);
+  form.append("passport_registration", files.passportRegistration);
+  form.append("egrn_extract", files.egrnExtract);
+
+  try {
+    const response = await fetchWithTimeout(
+      UNIFIED_SCAN_API_URL,
+      { method: "POST", body: form },
+      FETCH_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    return (await response.json()) as UnifiedScanResponse;
+  } catch (error: unknown) {
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания (бэкенд HF ~${HF_SEC} с). Убедитесь, что uvicorn запущен; при перегрузке HF увеличьте HF_REQUEST_TIMEOUT_SEC.`,
+    );
+  }
+}
+
 export async function buildContractFromPassport(
   file: File,
 ): Promise<BuildContractResponse> {
@@ -160,6 +228,59 @@ export async function buildContractFromPassport(
     throw toNetworkError(
       error,
       `Превышено время ожидания (HF ~${HF_SEC} с). Повторите или увеличьте HF_REQUEST_TIMEOUT_SEC.`,
+    );
+  }
+}
+
+export async function buildContractFromUnifiedJson(
+  scanResponse: UnifiedScanResponse,
+): Promise<BuildContractResponse> {
+  try {
+    const response = await fetchWithTimeout(
+      UNIFIED_CONTRACT_API_URL,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(scanResponse),
+      },
+      FETCH_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+
+    const payload = (await response.json()) as {
+      download_url?: string;
+      generated_filename?: string;
+    };
+    const downloadUrl = payload.download_url;
+    if (!downloadUrl) {
+      const err = new Error("API не вернул ссылку для скачивания договора.") as ApiError;
+      err.code = "api";
+      throw err;
+    }
+
+    const fileResponse = await fetchWithTimeout(
+      `${API_BASE_URL}${downloadUrl}`,
+      { method: "GET" },
+      DOWNLOAD_TIMEOUT_MS,
+    );
+    if (!fileResponse.ok) {
+      const err = new Error(`Ошибка скачивания файла: ${fileResponse.status}`) as ApiError;
+      err.code = "download";
+      throw err;
+    }
+
+    const blob = await fileResponse.blob();
+    const filename = payload.generated_filename ?? downloadUrl.split("/").pop() ?? "dogovor.docx";
+    return { blob, filename };
+  } catch (error: unknown) {
+    if ((error as ApiError)?.code) {
+      throw error;
+    }
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания (бэкенд HF ~${HF_SEC} с). Убедитесь, что uvicorn запущен; при перегрузке HF увеличьте HF_REQUEST_TIMEOUT_SEC.`,
     );
   }
 }

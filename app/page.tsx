@@ -1,21 +1,11 @@
 "use client";
 
-import {
-  AlertCircle,
-  ChevronDown,
-  ChevronUp,
-  FileDown,
-  FileText,
-  Loader2,
-  Scan,
-  Upload,
-} from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronUp, FileDown, Loader2, Scan, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  buildContractFromPassport,
-  type PassportData,
-  scanPassport,
-  type ScanResponse,
+  buildContractFromUnifiedJson,
+  scanDocumentsUnified,
+  type UnifiedScanResponse,
 } from "@/lib/api/passport";
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
   "image/png",
@@ -24,7 +14,37 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 
-const FIELD_LABELS: Record<keyof PassportData, string> = {
+type UploadKey = "passportMain" | "passportRegistration" | "egrnExtract";
+
+type UploadSlot = {
+  key: UploadKey;
+  title: string;
+  subtitle: string;
+  apiField: "passport_main" | "passport_registration" | "egrn_extract";
+};
+
+const UPLOAD_SLOTS: UploadSlot[] = [
+  {
+    key: "passportMain",
+    title: "Фото паспорта (основной разворот)",
+    subtitle: "Разворот с фото и персональными данными",
+    apiField: "passport_main",
+  },
+  {
+    key: "passportRegistration",
+    title: "Фото страницы с пропиской",
+    subtitle: "Страница паспорта с адресом регистрации",
+    apiField: "passport_registration",
+  },
+  {
+    key: "egrnExtract",
+    title: "Фото выписки ЕГРН",
+    subtitle: "Страница с реквизитами объекта и правообладателя",
+    apiField: "egrn_extract",
+  },
+];
+
+const PASSPORT_MAIN_LABELS = {
   issuing_authority: "Кем выдан",
   issue_date: "Дата выдачи",
   department_code: "Код подразделения",
@@ -39,65 +59,106 @@ const FIELD_LABELS: Record<keyof PassportData, string> = {
   confidence_note: "Примечание модели",
 };
 
+const REGISTRATION_LABELS = {
+  region: "Регион",
+  city: "Город",
+  settlement: "Населенный пункт",
+  street: "Улица",
+  house: "Дом",
+  building: "Корпус/строение",
+  apartment: "Квартира",
+  registration_date: "Дата регистрации",
+  confidence_note: "Примечание модели",
+};
+
+const EGRN_LABELS = {
+  cadastral_number: "Кадастровый номер",
+  object_type: "Тип объекта",
+  address: "Адрес объекта",
+  area_sq_m: "Площадь, м2",
+  ownership_type: "Вид права",
+  right_holders: "Правообладатели",
+  extract_date: "Дата выписки",
+  confidence_note: "Примечание модели",
+};
+
 export default function PassportHfPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [uploadSnapshot, setUploadSnapshot] = useState<File | null>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const [scanResult, setScanResult] = useState<ScanResponse | null>(null);
-  const [contractBlob, setContractBlob] = useState<Blob | null>(null);
-  const [contractFilename, setContractFilename] = useState<string | null>(null);
+  const [files, setFiles] = useState<Record<UploadKey, File | null>>({
+    passportMain: null,
+    passportRegistration: null,
+    egrnExtract: null,
+  });
+  const [dragOverKey, setDragOverKey] = useState<UploadKey | null>(null);
+  const [scanResult, setScanResult] = useState<UnifiedScanResponse | null>(null);
   const [scanning, setScanning] = useState(false);
   const [buildingContract, setBuildingContract] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showFullJson, setShowFullJson] = useState(false);
-  const [rawOpen, setRawOpen] = useState(false);
+  const [contractBlob, setContractBlob] = useState<Blob | null>(null);
+  const [contractFilename, setContractFilename] = useState<string | null>(null);
+  const [downloadHref, setDownloadHref] = useState<string | null>(null);
+  const [rawOpenByKey, setRawOpenByKey] = useState<Record<UploadKey, boolean>>({
+    passportMain: false,
+    passportRegistration: false,
+    egrnExtract: false,
+  });
 
-  const resetForNewFile = useCallback(() => {
+  const resetForNewFiles = useCallback(() => {
     setScanResult(null);
-    setUploadSnapshot(null);
-    setContractBlob(null);
-    setContractFilename(null);
     setError(null);
     setShowFullJson(false);
-    setRawOpen(false);
+    setContractBlob(null);
+    setContractFilename(null);
+    setDownloadHref(null);
+    setRawOpenByKey({
+      passportMain: false,
+      passportRegistration: false,
+      egrnExtract: false,
+    });
   }, []);
 
   const onFileChosen = useCallback(
-    (f: File | null) => {
+    (key: UploadKey, f: File | null) => {
       if (!f) return;
       if (!ALLOWED_IMAGE_MIME_TYPES.has(f.type)) {
         setError("Поддерживаются только PNG, JPG, JPEG и WEBP.");
         return;
       }
-      setFile(f);
-      resetForNewFile();
+      setFiles((prev) => ({ ...prev, [key]: f }));
+      resetForNewFiles();
     },
-    [resetForNewFile],
+    [resetForNewFiles],
   );
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    (key: UploadKey, e: React.DragEvent) => {
       e.preventDefault();
-      setDragOver(false);
+      setDragOverKey(null);
       const f = e.dataTransfer.files[0];
-      if (f) onFileChosen(f);
+      if (f) onFileChosen(key, f);
     },
     [onFileChosen],
   );
 
   const handleScan = async () => {
-    if (!file) return;
+    const passportMain = files.passportMain;
+    const passportRegistration = files.passportRegistration;
+    const egrnExtract = files.egrnExtract;
+    if (!passportMain || !passportRegistration || !egrnExtract) return;
+
     setError(null);
     setScanning(true);
-    setContractBlob(null);
-    setContractFilename(null);
     try {
-      const data = await scanPassport(file);
+      const data = await scanDocumentsUnified({
+        passportMain,
+        passportRegistration,
+        egrnExtract,
+      });
       setScanResult(data);
-      setUploadSnapshot(file);
+      setContractBlob(null);
+      setContractFilename(null);
     } catch (e: unknown) {
       setScanResult(null);
-      setUploadSnapshot(null);
       setError(e instanceof Error ? e.message : "Неизвестная ошибка");
     } finally {
       setScanning(false);
@@ -105,12 +166,11 @@ export default function PassportHfPage() {
   };
 
   const handleBuildContract = async () => {
-    const sourceFile = uploadSnapshot ?? file;
-    if (!sourceFile || !scanResult) return;
+    if (!scanResult) return;
     setError(null);
     setBuildingContract(true);
     try {
-      const result = await buildContractFromPassport(sourceFile);
+      const result = await buildContractFromUnifiedJson(scanResult);
       setContractBlob(result.blob);
       setContractFilename(result.filename);
     } catch (e: unknown) {
@@ -119,17 +179,6 @@ export default function PassportHfPage() {
       setBuildingContract(false);
     }
   };
-
-  const dataEntries = useMemo(() => {
-    if (!scanResult?.data) return [];
-    return (Object.keys(FIELD_LABELS) as (keyof PassportData)[]).map((key) => ({
-      key,
-      label: FIELD_LABELS[key],
-      value: scanResult.data[key]?.toString().trim() ?? "",
-    }));
-  }, [scanResult]);
-
-  const [downloadHref, setDownloadHref] = useState<string | null>(null);
 
   useEffect(() => {
     if (!contractBlob) {
@@ -143,8 +192,46 @@ export default function PassportHfPage() {
     };
   }, [contractBlob]);
 
+  const allFilesSelected = Boolean(
+    files.passportMain && files.passportRegistration && files.egrnExtract,
+  );
+
+  const passportEntries = useMemo(() => {
+    if (!scanResult?.data?.passport_main) return [];
+    return (Object.keys(PASSPORT_MAIN_LABELS) as Array<keyof typeof PASSPORT_MAIN_LABELS>).map(
+      (key) => ({
+        key,
+        label: PASSPORT_MAIN_LABELS[key],
+        value: scanResult.data.passport_main[key as keyof typeof scanResult.data.passport_main],
+      }),
+    );
+  }, [scanResult]);
+
+  const registrationEntries = useMemo(() => {
+    if (!scanResult?.data?.passport_registration) return [];
+    return (Object.keys(REGISTRATION_LABELS) as Array<keyof typeof REGISTRATION_LABELS>).map(
+      (key) => ({
+        key,
+        label: REGISTRATION_LABELS[key],
+        value:
+          scanResult.data.passport_registration[
+            key as keyof typeof scanResult.data.passport_registration
+          ],
+      }),
+    );
+  }, [scanResult]);
+
+  const egrnEntries = useMemo(() => {
+    if (!scanResult?.data?.egrn_extract) return [];
+    return (Object.keys(EGRN_LABELS) as Array<keyof typeof EGRN_LABELS>).map((key) => ({
+      key,
+      label: EGRN_LABELS[key],
+      value: scanResult.data.egrn_extract[key as keyof typeof scanResult.data.egrn_extract],
+    }));
+  }, [scanResult]);
+
   return (
-    <div className="relative min-h-screen">
+    <div className="relative min-h-screen text-black">
       <div
         className="pointer-events-none absolute inset-0 overflow-hidden"
         aria-hidden
@@ -156,220 +243,252 @@ export default function PassportHfPage() {
 
       <div className="relative mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
         <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-9">
-          <div className="mb-5 flex items-center gap-3">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 ring-1 ring-slate-200/90">
-              <Upload className="size-5 text-[color:var(--ph-accent)]" aria-hidden />
-            </span>
-            <div>
-              <label
-                htmlFor="passport-file-input"
-                className="text-base font-semibold text-[color:var(--ph-ink)]"
-              >
-                Фото паспорта
-              </label>
-              <p className="text-xs text-[color:var(--ph-muted)]">
-                Чёткое изображение разворота с фото
-              </p>
-            </div>
-          </div>
-        <div
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              document.getElementById("passport-file-input")?.click();
-            }
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => document.getElementById("passport-file-input")?.click()}
-          className={[
-            "group relative cursor-pointer rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-all duration-300",
-            dragOver
-              ? "scale-[1.01] border-[color:var(--ph-accent)] bg-[color:var(--ph-glow)] shadow-[0_0_0_4px_rgba(37,99,235,0.18)]"
-              : "border-[color:var(--ph-drop-border)] hover:border-[color:var(--ph-drop-border-hover)] hover:bg-[color:var(--ph-surface)]",
-          ].join(" ")}
-        >
-          <input
-            id="passport-file-input"
-            type="file"
-            accept="image/png,image/jpeg,image/jpg,image/webp"
-            className="sr-only"
-            onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)}
-          />
-          <div className="pointer-events-none flex flex-col items-center gap-3">
-            <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-white to-blue-50/80 shadow-sm ring-1 ring-blue-100 transition group-hover:ring-[color:var(--ph-accent-dim)] group-hover:shadow-md">
-              <Upload className="size-6 text-[color:var(--ph-accent)]" aria-hidden />
-            </div>
-            <p className="text-sm text-[color:var(--ph-muted)]">
-              Перетащите файл сюда или нажмите для выбора
-            </p>
-            <p className="text-xs text-[color:var(--ph-faint)]">PNG, JPG, JPEG, WEBP</p>
-            {file && (
-              <p className="mt-2 max-w-full truncate font-medium text-[color:var(--ph-accent)]">
-                {file.name}
-                <span className="ml-2 font-normal text-[color:var(--ph-muted)]">
-                  ({(file.size / 1024).toFixed(1)} KB)
-                </span>
-              </p>
-            )}
-          </div>
-        </div>
+          <h1 className="mb-6 text-xl font-semibold tracking-tight text-black">
+            Сканирование 3 документов в единый JSON
+          </h1>
 
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <button
-            type="button"
-            disabled={!file || scanning}
-            onClick={handleScan}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-7 py-3.5 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {scanning ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <Scan className="size-4" aria-hidden />
-            )}
-            Сканировать 
-          </button>
-          {scanning && (
-            <p className="flex items-center gap-2 text-sm text-[color:var(--ph-muted)]">
-              <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--ph-accent)]" />
-              Сканирую паспорт 
-            </p>
-          )}
-        </div>
-      </section>
-
-      {error && (
-        <div
-          role="alert"
-          className="mb-8 flex gap-3 rounded-2xl border border-red-200/80 bg-red-50/90 px-5 py-4 text-sm text-red-900 shadow-[0_8px_30px_-12px_rgba(185,28,28,0.2)] backdrop-blur-sm"
-        >
-          <AlertCircle className="mt-0.5 size-5 shrink-0 text-red-600" aria-hidden />
-          <pre className="whitespace-pre-wrap font-sans">{error}</pre>
-        </div>
-      )}
-
-      {scanResult && (
-        <>
-          <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
-            <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <span
-                  className="hidden h-9 w-1 shrink-0 rounded-full bg-gradient-to-b from-blue-600 to-sky-400 sm:block"
-                  aria-hidden
-                />
-                <h2 className="text-xl font-semibold tracking-tight text-[color:var(--ph-ink)]">
-                  Данные паспорта
-                </h2>
-              </div>
-             
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {dataEntries.map(({ key, label, value }) => (
-                <div
-                  key={key}
-                  className="rounded-2xl border border-slate-200/90 bg-slate-50/50 px-4 py-3.5 shadow-sm transition hover:border-blue-200/80 hover:bg-white hover:shadow-md"
-                >
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-[color:var(--ph-muted)]">
-                    {label}
+          <div className="space-y-5">
+            {UPLOAD_SLOTS.map((slot) => {
+              const inputId = `${slot.key}-input`;
+              const slotFile = files[slot.key];
+              const isDragOver = dragOverKey === slot.key;
+              return (
+                <div key={slot.key}>
+                  <div className="mb-3 flex items-center gap-3">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-2xl bg-slate-50 ring-1 ring-slate-200/90">
+                      <Upload className="size-4 text-[color:var(--ph-accent)]" aria-hidden />
+                    </span>
+                    <div>
+                      <label htmlFor={inputId} className="text-sm font-semibold text-black">
+                        {slot.title}
+                      </label>
+                      <p className="text-xs text-black">{slot.subtitle}</p>
+                    </div>
                   </div>
-                  <div className="mt-1.5 break-words text-sm font-medium leading-snug text-[color:var(--ph-ink)]">
-                    {value || "—"}
+
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        document.getElementById(inputId)?.click();
+                      }
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragOverKey(slot.key);
+                    }}
+                    onDragLeave={() => setDragOverKey(null)}
+                    onDrop={(e) => handleDrop(slot.key, e)}
+                    onClick={() => document.getElementById(inputId)?.click()}
+                    className={[
+                      "group relative cursor-pointer rounded-2xl border-2 border-dashed px-6 py-8 text-center transition-all duration-300",
+                      isDragOver
+                        ? "scale-[1.01] border-[color:var(--ph-accent)] bg-[color:var(--ph-glow)] shadow-[0_0_0_4px_rgba(37,99,235,0.18)]"
+                        : "border-[color:var(--ph-drop-border)] hover:border-[color:var(--ph-drop-border-hover)] hover:bg-[color:var(--ph-surface)]",
+                    ].join(" ")}
+                  >
+                    <input
+                      id={inputId}
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      className="sr-only"
+                      onChange={(e) => onFileChosen(slot.key, e.target.files?.[0] ?? null)}
+                    />
+                    <div className="pointer-events-none flex flex-col items-center gap-2">
+                      <p className="text-sm text-black">
+                        Перетащите файл или нажмите для выбора
+                      </p>
+                      <p className="text-xs text-black">PNG, JPG, JPEG, WEBP</p>
+                      {slotFile && (
+                        <p className="mt-1 max-w-full truncate font-medium text-[color:var(--ph-accent)]">
+                          {slotFile.name}
+                          <span className="ml-2 font-normal text-black">
+                            ({(slotFile.size / 1024).toFixed(1)} KB)
+                          </span>
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <button
               type="button"
-              onClick={() => setShowFullJson((v) => !v)}
-              className="mt-5 inline-flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-slate-100"
+              disabled={!allFilesSelected || scanning}
+              onClick={handleScan}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-7 py-3.5 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {showFullJson ? (
-                <ChevronUp className="size-4" />
+              {scanning ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
               ) : (
-                <ChevronDown className="size-4" />
+                <Scan className="size-4" aria-hidden />
               )}
-              Показать полный JSON ответа
+              Сканировать 3 документа
             </button>
-            {showFullJson && (
-              <pre className="mt-3 max-h-[min(420px,50vh)] overflow-auto rounded-2xl border border-[color:var(--ph-border)] bg-[color:var(--ph-pre-bg)] p-4 text-xs leading-relaxed text-[color:var(--ph-muted)] shadow-inner">
-                {JSON.stringify(scanResult, null, 2)}
-              </pre>
+            {scanning && (
+              <p className="flex items-center gap-2 text-sm text-black">
+                <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--ph-accent)]" />
+                Выполняю OCR через Qwen...
+              </p>
             )}
-            {scanResult.raw_text && (
-              <div className="mt-6">
+          </div>
+        </section>
+
+        {error && (
+          <div
+            role="alert"
+            className="mb-8 flex gap-3 rounded-2xl border border-red-200/80 bg-red-50/90 px-5 py-4 text-sm text-red-900 shadow-[0_8px_30px_-12px_rgba(185,28,28,0.2)] backdrop-blur-sm"
+          >
+            <AlertCircle className="mt-0.5 size-5 shrink-0 text-red-600" aria-hidden />
+            <pre className="whitespace-pre-wrap font-sans">{error}</pre>
+          </div>
+        )}
+
+        {scanResult && (
+          <>
+            <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
+              <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+                <h2 className="text-xl font-semibold tracking-tight text-black">
+                  Итоговый JSON по 3 документам
+                </h2>
+              </div>
+
+              <div className="mb-5 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setRawOpen((v) => !v)}
-                  className="flex w-full items-center justify-between rounded-2xl border border-slate-200/90 bg-slate-50/80 px-4 py-3.5 text-left text-sm font-medium text-slate-900 shadow-sm transition hover:bg-slate-100"
+                  onClick={handleBuildContract}
+                  disabled={buildingContract}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-800 shadow-sm transition hover:border-blue-300 hover:bg-blue-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <span className="flex items-center gap-2">
-                    <FileText className="size-4 text-[color:var(--ph-accent)]" />
-                    Сырой текст ответа модели
-                  </span>
-                  {rawOpen ? (
-                    <ChevronUp className="size-4 text-[color:var(--ph-muted)]" />
+                  {buildingContract ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
                   ) : (
-                    <ChevronDown className="size-4 text-[color:var(--ph-muted)]" />
+                    <FileDown className="size-4 text-[color:var(--ph-accent)]" aria-hidden />
                   )}
+                  Создать договор (.docx)
                 </button>
-                {rawOpen && (
+                {contractBlob && downloadHref && (
+                  <a
+                    href={downloadHref}
+                    download={contractFilename ?? "dogovor.docx"}
+                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                  >
+                    <FileDown className="size-4" aria-hidden />
+                    Скачать договор
+                  </a>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowFullJson((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-slate-100"
+              >
+                {showFullJson ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                Показать полный JSON ответа
+              </button>
+              {showFullJson && (
+                <pre className="mt-3 max-h-[min(420px,50vh)] overflow-auto rounded-2xl border border-[color:var(--ph-border)] bg-[color:var(--ph-pre-bg)] p-4 text-xs leading-relaxed text-[color:var(--ph-muted)] shadow-inner">
+                  {JSON.stringify(scanResult, null, 2)}
+                </pre>
+              )}
+            </section>
+
+            {[
+              { key: "passportMain" as const, title: "Паспорт (основная страница)", entries: passportEntries },
+              {
+                key: "passportRegistration" as const,
+                title: "Паспорт (страница с пропиской)",
+                entries: registrationEntries,
+              },
+              { key: "egrnExtract" as const, title: "Выписка ЕГРН", entries: egrnEntries },
+            ].map((block) => (
+              <section
+                key={block.key}
+                className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8"
+              >
+                <h3 className="mb-4 text-lg font-semibold text-black">{block.title}</h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {block.entries.map(({ key, label, value }) => (
+                    <div
+                      key={key}
+                      className="rounded-2xl border border-slate-200/90 bg-slate-50/50 px-4 py-3.5 shadow-sm transition hover:border-blue-200/80 hover:bg-white hover:shadow-md"
+                    >
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-black">
+                        {label}
+                      </div>
+                      <div className="mt-1.5 break-words text-sm font-medium leading-snug text-black">
+                        {Array.isArray(value)
+                          ? value.length
+                            ? value.join(", ")
+                            : "—"
+                          : String(value || "").trim() || "—"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRawOpenByKey((prev) => ({
+                      ...prev,
+                      [block.key]: !prev[block.key],
+                    }))
+                  }
+                  className="mt-5 flex w-full items-center justify-between rounded-2xl border border-slate-200/90 bg-slate-50/80 px-4 py-3.5 text-left text-sm font-medium text-slate-900 shadow-sm transition hover:bg-slate-100"
+                >
+                  <span>Сырой ответ модели</span>
+                  {rawOpenByKey[block.key] ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                </button>
+                {rawOpenByKey[block.key] && (
                   <textarea
                     readOnly
-                    value={scanResult.raw_text}
+                    value={
+                      scanResult.raw_text[
+                        UPLOAD_SLOTS.find((slot) => slot.key === block.key)?.apiField ?? "passport_main"
+                      ]
+                    }
                     className="mt-2 min-h-[220px] w-full resize-y rounded-2xl border border-[color:var(--ph-border)] bg-[color:var(--ph-pre-bg)] px-4 py-3 font-mono text-xs leading-relaxed text-[color:var(--ph-muted)] shadow-inner"
                   />
                 )}
-              </div>
-            )}
-          </section>
+              </section>
+            ))}
 
-          <section className="rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
-            <div className="mb-5 flex items-start gap-3">
-              <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 ring-1 ring-slate-200/90">
-                <FileText className="size-5 text-[color:var(--ph-accent)]" aria-hidden />
-              </span>
-              <div>
-                <h2 className="text-xl font-semibold tracking-tight text-[color:var(--ph-ink)]">
-                  Договор
-                </h2>
-                <p className="mt-1 text-sm leading-relaxed text-[color:var(--ph-muted)]">
-                  Нужен успешный скан и тот же файл в сессии (пересканируйте при
-                  сбое).
-                </p>
+            <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleBuildContract}
+                  disabled={buildingContract}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {buildingContract ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <FileDown className="size-4" aria-hidden />
+                  )}
+                  Создать договор (.docx)
+                </button>
+                {contractBlob && downloadHref && (
+                  <a
+                    href={downloadHref}
+                    download={contractFilename ?? "dogovor.docx"}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-blue-300 hover:bg-blue-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                  >
+                    <FileDown className="size-4" aria-hidden />
+                    Скачать договор
+                  </a>
+                )}
               </div>
-            </div>
-            <button
-              type="button"
-              disabled={!file || !scanResult || buildingContract}
-              onClick={handleBuildContract}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-800 shadow-sm transition hover:border-blue-300 hover:bg-blue-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {buildingContract ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : (
-                <FileText className="size-4 text-[color:var(--ph-accent)]" aria-hidden />
-              )}
-              Сформировать договор (.docx) по данным паспорта
-            </button>
-            {contractBlob && downloadHref && (
-              <a
-                href={downloadHref}
-                download={contractFilename ?? "dogovor.docx"}
-                className="mt-6 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-7 py-3.5 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-              >
-                <FileDown className="size-4" aria-hidden />
-                Скачать договор (.docx)
-              </a>
-            )}
-          </section>
-        </>
-      )}
+            </section>
+          </>
+        )}
       </div>
     </div>
   );
