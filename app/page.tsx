@@ -82,6 +82,22 @@ const EGRN_LABELS = {
   confidence_note: "Примечание модели",
 };
 
+function buildRegistrationAddress(registration: UnifiedScanResponse["data"]["passport_registration"]): string {
+  const parts: string[] = [];
+  const pushIf = (v?: string) => {
+    const value = String(v ?? "").trim();
+    if (value) parts.push(value);
+  };
+  pushIf(registration.region);
+  pushIf(registration.city);
+  pushIf(registration.settlement);
+  pushIf(registration.street);
+  if (registration.house?.trim()) parts.push(`д. ${registration.house.trim()}`);
+  if (registration.building?.trim()) parts.push(`корп. ${registration.building.trim()}`);
+  if (registration.apartment?.trim()) parts.push(`кв. ${registration.apartment.trim()}`);
+  return parts.join(", ");
+}
+
 export default function PassportHfPage() {
   const [files, setFiles] = useState<Record<UploadKey, File | null>>({
     passportMain: null,
@@ -97,6 +113,7 @@ export default function PassportHfPage() {
   const [contractBlob, setContractBlob] = useState<Blob | null>(null);
   const [contractFilename, setContractFilename] = useState<string | null>(null);
   const [downloadHref, setDownloadHref] = useState<string | null>(null);
+  const [customerAddressOverride, setCustomerAddressOverride] = useState("");
   const [rawOpenByKey, setRawOpenByKey] = useState<Record<UploadKey, boolean>>({
     passportMain: false,
     passportRegistration: false,
@@ -110,6 +127,7 @@ export default function PassportHfPage() {
     setContractBlob(null);
     setContractFilename(null);
     setDownloadHref(null);
+    setCustomerAddressOverride("");
     setRawOpenByKey({
       passportMain: false,
       passportRegistration: false,
@@ -155,6 +173,7 @@ export default function PassportHfPage() {
         egrnExtract,
       });
       setScanResult(data);
+      setCustomerAddressOverride(buildRegistrationAddress(data.data.passport_registration));
       setContractBlob(null);
       setContractFilename(null);
     } catch (e: unknown) {
@@ -170,7 +189,7 @@ export default function PassportHfPage() {
     setError(null);
     setBuildingContract(true);
     try {
-      const result = await buildContractFromUnifiedJson(scanResult);
+      const result = await buildContractFromUnifiedJson(scanResult, customerAddressOverride);
       setContractBlob(result.blob);
       setContractFilename(result.filename);
     } catch (e: unknown) {
@@ -382,6 +401,22 @@ export default function PassportHfPage() {
                     Скачать договор
                   </a>
                 )}
+              </div>
+
+              <div className="mb-5">
+                <label
+                  htmlFor="customer-address-override"
+                  className="mb-1 block text-sm font-semibold text-black"
+                >
+                  Адрес заказчика (можно исправить вручную)
+                </label>
+                <textarea
+                  id="customer-address-override"
+                  value={customerAddressOverride}
+                  onChange={(e) => setCustomerAddressOverride(e.target.value)}
+                  placeholder="Введите корректный адрес заказчика"
+                  className="min-h-[84px] w-full resize-y rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
               </div>
 
               <button

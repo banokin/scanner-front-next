@@ -234,14 +234,21 @@ export async function buildContractFromPassport(
 
 export async function buildContractFromUnifiedJson(
   scanResponse: UnifiedScanResponse,
+  customerRegistrationAddressOverride?: string,
 ): Promise<BuildContractResponse> {
   try {
+    const requestPayload: Record<string, unknown> = { ...scanResponse };
+    const normalizedOverride = (customerRegistrationAddressOverride ?? "").trim();
+    if (normalizedOverride) {
+      requestPayload.customer_registration_address_override = normalizedOverride;
+    }
+
     const response = await fetchWithTimeout(
       UNIFIED_CONTRACT_API_URL,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(scanResponse),
+        body: JSON.stringify(requestPayload),
       },
       FETCH_TIMEOUT_MS,
     );
