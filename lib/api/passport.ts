@@ -235,12 +235,27 @@ export async function buildContractFromPassport(
 export async function buildContractFromUnifiedJson(
   scanResponse: UnifiedScanResponse,
   customerRegistrationAddressOverride?: string,
+  ownershipBasisDocumentOverride?: string,
+  customerEmailOverride?: string,
+  customerPhoneOverride?: string,
 ): Promise<BuildContractResponse> {
   try {
     const requestPayload: Record<string, unknown> = { ...scanResponse };
     const normalizedOverride = (customerRegistrationAddressOverride ?? "").trim();
     if (normalizedOverride) {
       requestPayload.customer_registration_address_override = normalizedOverride;
+    }
+    const normalizedOwnershipBasis = (ownershipBasisDocumentOverride ?? "").trim();
+    if (normalizedOwnershipBasis) {
+      requestPayload.ownership_basis_document_override = normalizedOwnershipBasis;
+    }
+    const normalizedCustomerEmail = (customerEmailOverride ?? "").trim();
+    if (normalizedCustomerEmail) {
+      requestPayload.customer_email_override = normalizedCustomerEmail;
+    }
+    const normalizedCustomerPhone = (customerPhoneOverride ?? "").trim();
+    if (normalizedCustomerPhone) {
+      requestPayload.customer_phone_override = normalizedCustomerPhone;
     }
 
     const response = await fetchWithTimeout(

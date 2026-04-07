@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildContractFromUnifiedJson,
   scanDocumentsUnified,
+  type EgrnExtractData,
+  type PassportData,
   type UnifiedScanResponse,
 } from "@/lib/api/passport";
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
@@ -39,7 +41,7 @@ const UPLOAD_SLOTS: UploadSlot[] = [
   {
     key: "egrnExtract",
     title: "Фото выписки ЕГРН",
-    subtitle: "Страница с реквизитами объекта и правообладателя",
+    subtitle: "Страница с реквизитами",
     apiField: "egrn_extract",
   },
 ];
@@ -56,7 +58,6 @@ const PASSPORT_MAIN_LABELS = {
   gender: "Пол",
   birth_date: "Дата рождения",
   birth_place: "Место рождения",
-  confidence_note: "Примечание модели",
 };
 
 const REGISTRATION_LABELS = {
@@ -68,7 +69,6 @@ const REGISTRATION_LABELS = {
   building: "Корпус/строение",
   apartment: "Квартира",
   registration_date: "Дата регистрации",
-  confidence_note: "Примечание модели",
 };
 
 const EGRN_LABELS = {
@@ -76,10 +76,7 @@ const EGRN_LABELS = {
   object_type: "Тип объекта",
   address: "Адрес объекта",
   area_sq_m: "Площадь, м2",
-  ownership_type: "Вид права",
-  right_holders: "Правообладатели",
   extract_date: "Дата выписки",
-  confidence_note: "Примечание модели",
 };
 
 function buildRegistrationAddress(registration: UnifiedScanResponse["data"]["passport_registration"]): string {
@@ -114,6 +111,11 @@ export default function PassportHfPage() {
   const [contractFilename, setContractFilename] = useState<string | null>(null);
   const [downloadHref, setDownloadHref] = useState<string | null>(null);
   const [customerAddressOverride, setCustomerAddressOverride] = useState("");
+  const [ownershipBasisDocumentOverride, setOwnershipBasisDocumentOverride] = useState("");
+  const [customerEmailOverride, setCustomerEmailOverride] = useState("");
+  const [customerPhoneOverride, setCustomerPhoneOverride] = useState("");
+  const [editablePassportData, setEditablePassportData] = useState<PassportData | null>(null);
+  const [editableEgrnData, setEditableEgrnData] = useState<EgrnExtractData | null>(null);
   const [rawOpenByKey, setRawOpenByKey] = useState<Record<UploadKey, boolean>>({
     passportMain: false,
     passportRegistration: false,
@@ -128,6 +130,11 @@ export default function PassportHfPage() {
     setContractFilename(null);
     setDownloadHref(null);
     setCustomerAddressOverride("");
+    setOwnershipBasisDocumentOverride("");
+    setCustomerEmailOverride("");
+    setCustomerPhoneOverride("");
+    setEditablePassportData(null);
+    setEditableEgrnData(null);
     setRawOpenByKey({
       passportMain: false,
       passportRegistration: false,
@@ -174,6 +181,11 @@ export default function PassportHfPage() {
       });
       setScanResult(data);
       setCustomerAddressOverride(buildRegistrationAddress(data.data.passport_registration));
+      setOwnershipBasisDocumentOverride("");
+      setCustomerEmailOverride("");
+      setCustomerPhoneOverride("");
+      setEditablePassportData({ ...data.data.passport_main });
+      setEditableEgrnData({ ...data.data.egrn_extract });
       setContractBlob(null);
       setContractFilename(null);
     } catch (e: unknown) {
@@ -189,7 +201,21 @@ export default function PassportHfPage() {
     setError(null);
     setBuildingContract(true);
     try {
-      const result = await buildContractFromUnifiedJson(scanResult, customerAddressOverride);
+      const preparedScanResult: UnifiedScanResponse = {
+        ...scanResult,
+        data: {
+          ...scanResult.data,
+          passport_main: editablePassportData ?? scanResult.data.passport_main,
+          egrn_extract: editableEgrnData ?? scanResult.data.egrn_extract,
+        },
+      };
+      const result = await buildContractFromUnifiedJson(
+        preparedScanResult,
+        customerAddressOverride,
+        ownershipBasisDocumentOverride,
+        customerEmailOverride,
+        customerPhoneOverride,
+      );
       setContractBlob(result.blob);
       setContractFilename(result.filename);
     } catch (e: unknown) {
@@ -197,6 +223,14 @@ export default function PassportHfPage() {
     } finally {
       setBuildingContract(false);
     }
+  };
+
+  const handlePassportFieldChange = (key: keyof PassportData, value: string) => {
+    setEditablePassportData((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const handleEgrnFieldChange = (key: keyof EgrnExtractData, value: string) => {
+    setEditableEgrnData((prev) => (prev ? { ...prev, [key]: value } : prev));
   };
 
   useEffect(() => {
@@ -216,15 +250,15 @@ export default function PassportHfPage() {
   );
 
   const passportEntries = useMemo(() => {
-    if (!scanResult?.data?.passport_main) return [];
+    if (!editablePassportData) return [];
     return (Object.keys(PASSPORT_MAIN_LABELS) as Array<keyof typeof PASSPORT_MAIN_LABELS>).map(
       (key) => ({
         key,
         label: PASSPORT_MAIN_LABELS[key],
-        value: scanResult.data.passport_main[key as keyof typeof scanResult.data.passport_main],
+        value: editablePassportData[key as keyof PassportData],
       }),
     );
-  }, [scanResult]);
+  }, [editablePassportData]);
 
   const registrationEntries = useMemo(() => {
     if (!scanResult?.data?.passport_registration) return [];
@@ -241,13 +275,13 @@ export default function PassportHfPage() {
   }, [scanResult]);
 
   const egrnEntries = useMemo(() => {
-    if (!scanResult?.data?.egrn_extract) return [];
+    if (!editableEgrnData) return [];
     return (Object.keys(EGRN_LABELS) as Array<keyof typeof EGRN_LABELS>).map((key) => ({
       key,
       label: EGRN_LABELS[key],
-      value: scanResult.data.egrn_extract[key as keyof typeof scanResult.data.egrn_extract],
+      value: editableEgrnData[key as keyof EgrnExtractData],
     }));
-  }, [scanResult]);
+  }, [editableEgrnData]);
 
   return (
     <div className="relative min-h-screen text-black">
@@ -419,6 +453,50 @@ export default function PassportHfPage() {
                 />
               </div>
 
+              <div className="mb-5">
+                <label
+                  htmlFor="ownership-basis-document-override"
+                  className="mb-1 block text-sm font-semibold text-black"
+                >
+                  Основание собственности (вручную для договора)
+                </label>
+                <textarea
+                  id="ownership-basis-document-override"
+                  value={ownershipBasisDocumentOverride}
+                  onChange={(e) => setOwnershipBasisDocumentOverride(e.target.value)}
+                  placeholder="Например: Выписка ЕГРН от 19.03.2025"
+                  className="min-h-[84px] w-full resize-y rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+              </div>
+
+              <div className="mb-5">
+                <label htmlFor="customer-email-override" className="mb-1 block text-sm font-semibold text-black">
+                  Email заказчика (для договора)
+                </label>
+                <input
+                  id="customer-email-override"
+                  type="email"
+                  value={customerEmailOverride}
+                  onChange={(e) => setCustomerEmailOverride(e.target.value)}
+                  placeholder="example@mail.ru"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+              </div>
+
+              <div className="mb-5">
+                <label htmlFor="customer-phone-override" className="mb-1 block text-sm font-semibold text-black">
+                  Телефон заказчика (для договора)
+                </label>
+                <input
+                  id="customer-phone-override"
+                  type="text"
+                  value={customerPhoneOverride}
+                  onChange={(e) => setCustomerPhoneOverride(e.target.value)}
+                  placeholder="+7 (___) ___-__-__"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+              </div>
+
               <button
                 type="button"
                 onClick={() => setShowFullJson((v) => !v)}
@@ -457,13 +535,33 @@ export default function PassportHfPage() {
                       <div className="text-[11px] font-semibold uppercase tracking-wider text-black">
                         {label}
                       </div>
-                      <div className="mt-1.5 break-words text-sm font-medium leading-snug text-black">
-                        {Array.isArray(value)
-                          ? value.length
-                            ? value.join(", ")
-                            : "—"
-                          : String(value || "").trim() || "—"}
-                      </div>
+                      {block.key === "passportMain" ? (
+                        <input
+                          type="text"
+                          value={String(value ?? "")}
+                          onChange={(e) =>
+                            handlePassportFieldChange(key as keyof PassportData, e.target.value)
+                          }
+                          className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium leading-snug text-black focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        />
+                      ) : block.key === "egrnExtract" ? (
+                        <input
+                          type="text"
+                          value={String(value ?? "")}
+                          onChange={(e) =>
+                            handleEgrnFieldChange(key as keyof EgrnExtractData, e.target.value)
+                          }
+                          className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium leading-snug text-black focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        />
+                      ) : (
+                        <div className="mt-1.5 break-words text-sm font-medium leading-snug text-black">
+                          {Array.isArray(value)
+                            ? value.length
+                              ? value.join(", ")
+                              : "—"
+                            : String(value || "").trim() || "—"}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
