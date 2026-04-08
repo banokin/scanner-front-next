@@ -15,6 +15,7 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
   "image/jpg",
   "image/webp",
 ]);
+const ALLOWED_EGRN_MIME_TYPES = new Set([...ALLOWED_IMAGE_MIME_TYPES, "application/pdf"]);
 
 type UploadKey = "passportMain" | "passportRegistration" | "egrnExtract";
 
@@ -41,7 +42,7 @@ const UPLOAD_SLOTS: UploadSlot[] = [
   {
     key: "egrnExtract",
     title: "Фото выписки ЕГРН",
-    subtitle: "Страница с реквизитами",
+    subtitle: "Фото или PDF выписки с реквизитами (PDF поддерживается)",
     apiField: "egrn_extract",
   },
 ];
@@ -145,8 +146,14 @@ export default function PassportHfPage() {
   const onFileChosen = useCallback(
     (key: UploadKey, f: File | null) => {
       if (!f) return;
-      if (!ALLOWED_IMAGE_MIME_TYPES.has(f.type)) {
-        setError("Поддерживаются только PNG, JPG, JPEG и WEBP.");
+      const allowedMimeTypes =
+        key === "egrnExtract" ? ALLOWED_EGRN_MIME_TYPES : ALLOWED_IMAGE_MIME_TYPES;
+      if (!allowedMimeTypes.has(f.type)) {
+        setError(
+          key === "egrnExtract"
+            ? "Для выписки ЕГРН поддерживаются PNG, JPG, JPEG, WEBP и PDF."
+            : "Поддерживаются только PNG, JPG, JPEG и WEBP.",
+        );
         return;
       }
       setFiles((prev) => ({ ...prev, [key]: f }));
@@ -345,7 +352,11 @@ export default function PassportHfPage() {
                     <input
                       id={inputId}
                       type="file"
-                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      accept={
+                        slot.key === "egrnExtract"
+                          ? "image/png,image/jpeg,image/jpg,image/webp,application/pdf"
+                          : "image/png,image/jpeg,image/jpg,image/webp"
+                      }
                       className="sr-only"
                       onChange={(e) => onFileChosen(slot.key, e.target.files?.[0] ?? null)}
                     />
@@ -353,7 +364,11 @@ export default function PassportHfPage() {
                       <p className="text-sm text-black">
                         Перетащите файл или нажмите для выбора
                       </p>
-                      <p className="text-xs text-black">PNG, JPG, JPEG, WEBP</p>
+                      <p className="text-xs text-black">
+                        {slot.key === "egrnExtract"
+                          ? "PNG, JPG, JPEG, WEBP, PDF"
+                          : "PNG, JPG, JPEG, WEBP"}
+                      </p>
                       {slotFile && (
                         <p className="mt-1 max-w-full truncate font-medium text-[color:var(--ph-accent)]">
                           {slotFile.name}
