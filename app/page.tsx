@@ -15,7 +15,7 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
   "image/jpg",
   "image/webp",
 ]);
-const ALLOWED_EGRN_MIME_TYPES = new Set([...ALLOWED_IMAGE_MIME_TYPES, "application/pdf"]);
+const ALLOWED_DOC_MIME_TYPES = new Set([...ALLOWED_IMAGE_MIME_TYPES, "application/pdf"]);
 
 type UploadKey = "passportMain" | "passportRegistration" | "egrnExtract";
 
@@ -30,13 +30,13 @@ const UPLOAD_SLOTS: UploadSlot[] = [
   {
     key: "passportMain",
     title: "Фото паспорта (основной разворот)",
-    subtitle: "Разворот с фото и персональными данными",
+    subtitle: "Фото или PDF разворота с фото и персональными данными",
     apiField: "passport_main",
   },
   {
     key: "passportRegistration",
     title: "Фото страницы с пропиской",
-    subtitle: "Страница паспорта с адресом регистрации",
+    subtitle: "Фото или PDF страницы паспорта с адресом регистрации",
     apiField: "passport_registration",
   },
   {
@@ -143,16 +143,18 @@ export default function PassportHfPage() {
     });
   }, []);
 
+  const isPdfByExtension = (filename: string): boolean =>
+    filename.trim().toLowerCase().endsWith(".pdf");
+
   const onFileChosen = useCallback(
     (key: UploadKey, f: File | null) => {
       if (!f) return;
-      const allowedMimeTypes =
-        key === "egrnExtract" ? ALLOWED_EGRN_MIME_TYPES : ALLOWED_IMAGE_MIME_TYPES;
-      if (!allowedMimeTypes.has(f.type)) {
+      const isAllowed =
+        ALLOWED_DOC_MIME_TYPES.has(f.type) ||
+        (f.type === "" && isPdfByExtension(f.name));
+      if (!isAllowed) {
         setError(
-          key === "egrnExtract"
-            ? "Для выписки ЕГРН поддерживаются PNG, JPG, JPEG, WEBP и PDF."
-            : "Поддерживаются только PNG, JPG, JPEG и WEBP.",
+          "Поддерживаются PNG, JPG, JPEG, WEBP и PDF.",
         );
         return;
       }
@@ -353,9 +355,7 @@ export default function PassportHfPage() {
                       id={inputId}
                       type="file"
                       accept={
-                        slot.key === "egrnExtract"
-                          ? "image/png,image/jpeg,image/jpg,image/webp,application/pdf"
-                          : "image/png,image/jpeg,image/jpg,image/webp"
+                        "image/png,image/jpeg,image/jpg,image/webp,application/pdf,.pdf"
                       }
                       className="sr-only"
                       onChange={(e) => onFileChosen(slot.key, e.target.files?.[0] ?? null)}
@@ -367,7 +367,7 @@ export default function PassportHfPage() {
                       <p className="text-xs text-black">
                         {slot.key === "egrnExtract"
                           ? "PNG, JPG, JPEG, WEBP, PDF"
-                          : "PNG, JPG, JPEG, WEBP"}
+                          : "PNG, JPG, JPEG, WEBP, PDF"}
                       </p>
                       {slotFile && (
                         <p className="mt-1 max-w-full truncate font-medium text-[color:var(--ph-accent)]">
@@ -426,31 +426,7 @@ export default function PassportHfPage() {
                 </h2>
               </div>
 
-              <div className="mb-5 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleBuildContract}
-                  disabled={buildingContract}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-800 shadow-sm transition hover:border-blue-300 hover:bg-blue-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {buildingContract ? (
-                    <Loader2 className="size-4 animate-spin" aria-hidden />
-                  ) : (
-                    <FileDown className="size-4 text-[color:var(--ph-accent)]" aria-hidden />
-                  )}
-                  Создать договор (.docx)
-                </button>
-                {contractBlob && downloadHref && (
-                  <a
-                    href={downloadHref}
-                    download={contractFilename ?? "dogovor.docx"}
-                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-                  >
-                    <FileDown className="size-4" aria-hidden />
-                    Скачать договор
-                  </a>
-                )}
-              </div>
+              
 
               <div className="mb-5">
                 <label
