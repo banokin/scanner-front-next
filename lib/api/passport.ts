@@ -3,10 +3,15 @@ const API_BASE_URL =
 const PASSPORT_HF_API_URL = `${API_BASE_URL}/scan-passport`;
 const PASSPORT_TO_CONTRACT_HF_API_URL = `${API_BASE_URL}/scan-passport-to-contract-hf`;
 const UNIFIED_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified`;
+const UNIFIED_TESSERACT_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified-tesseract`;
 const UNIFIED_CONTRACT_API_URL = `${API_BASE_URL}/unified-json-to-contract`;
 
 const HF_SEC = Number(process.env.NEXT_PUBLIC_HF_REQUEST_TIMEOUT_SEC ?? 90);
 const FETCH_TIMEOUT_MS = (10 + HF_SEC + 45) * 1000;
+/** Tesseract: три OCR подряд, без HF */
+const TESSERACT_FETCH_TIMEOUT_MS = Number(
+  process.env.NEXT_PUBLIC_TESSERACT_TIMEOUT_MS ?? 180_000,
+);
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 export type PassportData = {
@@ -37,6 +42,7 @@ export type BuildContractResponse = {
 };
 
 export type PassportRegistrationData = {
+  address: string;
   region: string;
   city: string;
   settlement: string;
@@ -78,7 +84,7 @@ export type ApiError = Error & {
   code?: "timeout" | "connection" | "api" | "download";
 };
 
-export { API_BASE_URL, HF_SEC };
+export { API_BASE_URL, HF_SEC, TESSERACT_FETCH_TIMEOUT_MS };
 
 async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -177,6 +183,38 @@ export async function scanDocumentsUnified(files: {
     throw toNetworkError(
       error,
       `Превышено время ожидания (бэкенд HF ~${HF_SEC} с). Убедитесь, что uvicorn запущен; при перегрузке HF увеличьте HF_REQUEST_TIMEOUT_SEC.`,
+    );
+  }
+}
+
+/**
+ * Те же поля, что unified HF, но только Tesseract + правила на бэкенде (`/scan-documents-unified-tesseract`).
+ * Дальше договор собирается тем же `POST /unified-json-to-contract`.
+ */
+export async function scanDocumentsUnifiedTesseract(files: {
+  passportMain: File;
+  passportRegistration: File;
+  egrnExtract: File;
+}): Promise<UnifiedScanResponse> {
+  const form = new FormData();
+  form.append("passport_main", files.passportMain);
+  form.append("passport_registration", files.passportRegistration);
+  form.append("egrn_extract", files.egrnExtract);
+
+  try {
+    const response = await fetchWithTimeout(
+      UNIFIED_TESSERACT_SCAN_API_URL,
+      { method: "POST", body: form },
+      TESSERACT_FETCH_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    return (await response.json()) as UnifiedScanResponse;
+  } catch (error: unknown) {
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания Tesseract (${Math.round(TESSERACT_FETCH_TIMEOUT_MS / 1000)} с). Проверьте, что uvicorn запущен и Tesseract установлен.`,
     );
   }
 }
