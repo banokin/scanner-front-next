@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildContractFromUnifiedJson,
   scanDocumentsUnified,
+  type ApiError,
   type EgrnExtractData,
   type PassportData,
   type UnifiedScanResponse,
@@ -108,6 +109,15 @@ function buildRegistrationAddress(registration: UnifiedScanResponse["data"]["pas
   return parts.join(", ");
 }
 
+function isPhotoQualityIssueError(error: unknown, message: string): boolean {
+  const apiError = error as ApiError | undefined;
+  if (apiError?.code === "api" && apiError?.status === 422) return true;
+  return (
+    /Ошибка API:\s*422/.test(message) ||
+    /(лучшем качестве|нечетк|размыт|низк[аое]+\s+разрешен)/i.test(message)
+  );
+}
+
 export default function PassportHfPage() {
   const [files, setFiles] = useState<Record<UploadKey, File | null>>({
     passportMain: null,
@@ -119,6 +129,7 @@ export default function PassportHfPage() {
   const [scanning, setScanning] = useState(false);
   const [buildingContract, setBuildingContract] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPhotoQualityBanner, setShowPhotoQualityBanner] = useState(false);
   const [showFullJson, setShowFullJson] = useState(false);
   const [contractBlob, setContractBlob] = useState<Blob | null>(null);
   const [contractFilename, setContractFilename] = useState<string | null>(null);
@@ -138,6 +149,7 @@ export default function PassportHfPage() {
   const resetForNewFiles = useCallback(() => {
     setScanResult(null);
     setError(null);
+    setShowPhotoQualityBanner(false);
     setShowFullJson(false);
     setContractBlob(null);
     setContractFilename(null);
@@ -193,6 +205,7 @@ export default function PassportHfPage() {
     if (!passportMain || !passportRegistration || !egrnExtract) return;
 
     setError(null);
+    setShowPhotoQualityBanner(false);
     setScanning(true);
     try {
       const data = await scanDocumentsUnified({
@@ -211,7 +224,9 @@ export default function PassportHfPage() {
       setContractFilename(null);
     } catch (e: unknown) {
       setScanResult(null);
-      setError(e instanceof Error ? e.message : "Неизвестная ошибка");
+      const message = e instanceof Error ? e.message : "Неизвестная ошибка";
+      setError(message);
+      setShowPhotoQualityBanner(isPhotoQualityIssueError(e, message));
     } finally {
       setScanning(false);
     }
@@ -220,6 +235,7 @@ export default function PassportHfPage() {
   const handleBuildContract = async () => {
     if (!scanResult) return;
     setError(null);
+    setShowPhotoQualityBanner(false);
     setBuildingContract(true);
     try {
       const preparedScanResult: UnifiedScanResponse = {
@@ -240,7 +256,9 @@ export default function PassportHfPage() {
       setContractBlob(result.blob);
       setContractFilename(result.filename);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Неизвестная ошибка");
+      const message = e instanceof Error ? e.message : "Неизвестная ошибка";
+      setError(message);
+      setShowPhotoQualityBanner(isPhotoQualityIssueError(e, message));
     } finally {
       setBuildingContract(false);
     }
@@ -419,7 +437,20 @@ export default function PassportHfPage() {
           </div>
         </section>
 
-        {error && (
+        {showPhotoQualityBanner && (
+          <div
+            role="alert"
+            className="mb-8 flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900 shadow-[0_8px_30px_-12px_rgba(180,83,9,0.25)]"
+          >
+            <AlertCircle className="mt-0.5 size-5 shrink-0 text-amber-600" aria-hidden />
+            <div className="space-y-1">
+              <p className="font-semibold">Фото нечеткое — загрузите снимок в лучшем качестве.</p>
+              <p>Проверьте фокус, освещение и чтобы весь документ был в кадре.</p>
+            </div>
+          </div>
+        )}
+
+        {error && !showPhotoQualityBanner && (
           <div
             role="alert"
             className="mb-8 flex gap-3 rounded-2xl border border-red-200/80 bg-red-50/90 px-5 py-4 text-sm text-red-900 shadow-[0_8px_30px_-12px_rgba(185,28,28,0.2)] backdrop-blur-sm"

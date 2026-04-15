@@ -82,6 +82,8 @@ export type UnifiedScanResponse = {
 
 export type ApiError = Error & {
   code?: "timeout" | "connection" | "api" | "download";
+  status?: number;
+  detail?: string;
 };
 
 export { API_BASE_URL, HF_SEC, TESSERACT_FETCH_TIMEOUT_MS };
@@ -136,16 +138,21 @@ export function formatApiDetail(detail: unknown): string {
 
 async function toApiErrorFromResponse(response: Response): Promise<ApiError> {
   let msg = `Ошибка API: ${response.status}`;
+  let detailText = "";
   try {
     const errBody = (await response.json()) as { detail?: unknown };
     if (errBody.detail !== undefined) {
-      msg += `\n${formatApiDetail(errBody.detail)}`;
+      detailText = formatApiDetail(errBody.detail);
+      msg += `\n${detailText}`;
     }
   } catch {
-    msg += `\n${await response.text()}`;
+    detailText = await response.text();
+    msg += `\n${detailText}`;
   }
   const err = new Error(msg) as ApiError;
   err.code = "api";
+  err.status = response.status;
+  err.detail = detailText;
   return err;
 }
 
