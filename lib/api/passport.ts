@@ -86,6 +86,31 @@ export type ApiError = Error & {
 
 export { API_BASE_URL, HF_SEC, TESSERACT_FETCH_TIMEOUT_MS };
 
+function normalizeCustomerAddress(value: string): string {
+  const compact = value
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s*,\s*/g, ", ");
+  if (!compact) return "";
+  const parts = compact.split(",").map((part) => part.trim()).filter(Boolean);
+  return parts
+    .map((part, index) => {
+      let normalized = part.replace(/\bобласть\b/gi, "обл.");
+      normalized = normalized.replace(/^\s*город\s+/i, "г. ");
+      normalized = normalized.replace(/^\s*улица\s+/i, "ул. ");
+      if (
+        index === 1 &&
+        !/^(г\.|город|пгт|пос\.|с\.|дер\.)\s+/i.test(normalized) &&
+        !/^(ул\.|улица|просп\.|проспект|пер\.|переулок|бул\.|бульвар|ш\.|шоссе)\s+/i.test(normalized) &&
+        !/^(д\.|дом|кв\.|корп\.|стр\.)\s*/i.test(normalized)
+      ) {
+        normalized = `г. ${normalized}`;
+      }
+      return normalized;
+    })
+    .join(", ");
+}
+
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
@@ -279,7 +304,7 @@ export async function buildContractFromUnifiedJson(
 ): Promise<BuildContractResponse> {
   try {
     const requestPayload: Record<string, unknown> = { ...scanResponse };
-    const normalizedOverride = (customerRegistrationAddressOverride ?? "").trim();
+    const normalizedOverride = normalizeCustomerAddress(customerRegistrationAddressOverride ?? "");
     if (normalizedOverride) {
       requestPayload.customer_registration_address_override = normalizedOverride;
     }

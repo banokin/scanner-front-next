@@ -81,15 +81,27 @@ const EGRN_LABELS = {
 };
 
 function buildRegistrationAddress(registration: UnifiedScanResponse["data"]["passport_registration"]): string {
+  const withPrefix = (value: string | undefined, prefixes: string[], fallback: string): string => {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) return "";
+    if (prefixes.some((prefix) => new RegExp(`^${prefix}\\s+`, "i").test(normalized))) {
+      return normalized;
+    }
+    return `${fallback} ${normalized}`.trim();
+  };
+
   const parts: string[] = [];
   const pushIf = (v?: string) => {
     const value = String(v ?? "").trim();
     if (value) parts.push(value);
   };
-  pushIf(registration.region);
-  pushIf(registration.city);
-  pushIf(registration.settlement);
-  pushIf(registration.street);
+  const normalizedRegion = String(registration.region ?? "")
+    .trim()
+    .replace(/\bобласть\b/gi, "обл.");
+  pushIf(normalizedRegion);
+  pushIf(withPrefix(registration.city, ["г\\."], "г."));
+  pushIf(withPrefix(registration.settlement, ["пгт", "пос\\.", "с\\.", "дер\\."], "пос."));
+  pushIf(withPrefix(registration.street, ["ул\\.", "просп\\.", "пер\\.", "бул\\.", "ш\\."], "ул."));
   if (registration.house?.trim()) parts.push(`д. ${registration.house.trim()}`);
   if (registration.building?.trim()) parts.push(`корп. ${registration.building.trim()}`);
   if (registration.apartment?.trim()) parts.push(`кв. ${registration.apartment.trim()}`);
