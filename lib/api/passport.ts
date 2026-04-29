@@ -85,6 +85,11 @@ export type UnifiedTwoModelsScanResponse = {
   ok: boolean;
   models: Record<string, string>;
   data: Record<string, UnifiedScanResponse>;
+  passport_number_consensus?: string;
+  needs_review?: boolean;
+  extracted_numbers?: Record<string, { series: string; number: string; full: string }>;
+  recommended_passport_number?: { series: string; number: string };
+  extraction_debug?: Record<string, string>;
 };
 
 export type ApiError = Error & {
