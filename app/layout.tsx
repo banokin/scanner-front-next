@@ -57,6 +57,12 @@ export default function RootLayout({
             >
               Договор · Tesseract
             </Link>
+            <Link
+              href="/scan-two-models"
+              className="rounded-lg px-3 py-2 font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
+            >
+              3 документа · 2 модели
+            </Link>
           </nav>
         </header>
         <div className="passport-hf-root flex-1 font-sans antialiased">{children}</div>

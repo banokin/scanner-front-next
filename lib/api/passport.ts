@@ -3,6 +3,7 @@ const API_BASE_URL =
 const PASSPORT_HF_API_URL = `${API_BASE_URL}/scan-passport`;
 const PASSPORT_TO_CONTRACT_HF_API_URL = `${API_BASE_URL}/scan-passport-to-contract-hf`;
 const UNIFIED_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified`;
+const UNIFIED_TWO_MODELS_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified-two-models`;
 const UNIFIED_TESSERACT_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified-tesseract`;
 const UNIFIED_CONTRACT_API_URL = `${API_BASE_URL}/unified-json-to-contract`;
 
@@ -78,6 +79,12 @@ export type UnifiedScanResponse = {
     passport_registration: string;
     egrn_extract: string;
   };
+};
+
+export type UnifiedTwoModelsScanResponse = {
+  ok: boolean;
+  models: Record<string, string>;
+  data: Record<string, UnifiedScanResponse>;
 };
 
 export type ApiError = Error & {
@@ -211,6 +218,66 @@ export async function scanDocumentsUnified(files: {
       throw await toApiErrorFromResponse(response);
     }
     return (await response.json()) as UnifiedScanResponse;
+  } catch (error: unknown) {
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания (бэкенд HF ~${HF_SEC} с). Убедитесь, что uvicorn запущен; при перегрузке HF увеличьте HF_REQUEST_TIMEOUT_SEC.`,
+    );
+  }
+}
+
+export async function scanDocumentsUnifiedWithModel(
+  files: {
+    passportMain: File;
+    passportRegistration: File;
+    egrnExtract: File;
+  },
+  hfModel: string,
+): Promise<UnifiedScanResponse> {
+  const form = new FormData();
+  form.append("passport_main", files.passportMain);
+  form.append("passport_registration", files.passportRegistration);
+  form.append("egrn_extract", files.egrnExtract);
+  form.append("hf_model", hfModel);
+
+  try {
+    const response = await fetchWithTimeout(
+      UNIFIED_SCAN_API_URL,
+      { method: "POST", body: form },
+      FETCH_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    return (await response.json()) as UnifiedScanResponse;
+  } catch (error: unknown) {
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания (бэкенд HF ~${HF_SEC} с). Убедитесь, что uvicorn запущен; при перегрузке HF увеличьте HF_REQUEST_TIMEOUT_SEC.`,
+    );
+  }
+}
+
+export async function scanDocumentsUnifiedTwoModels(files: {
+  passportMain: File;
+  passportRegistration: File;
+  egrnExtract: File;
+}): Promise<UnifiedTwoModelsScanResponse> {
+  const form = new FormData();
+  form.append("passport_main", files.passportMain);
+  form.append("passport_registration", files.passportRegistration);
+  form.append("egrn_extract", files.egrnExtract);
+
+  try {
+    const response = await fetchWithTimeout(
+      UNIFIED_TWO_MODELS_SCAN_API_URL,
+      { method: "POST", body: form },
+      FETCH_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    return (await response.json()) as UnifiedTwoModelsScanResponse;
   } catch (error: unknown) {
     throw toNetworkError(
       error,
