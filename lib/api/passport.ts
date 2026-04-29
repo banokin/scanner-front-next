@@ -89,6 +89,14 @@ export type UnifiedTwoModelsScanResponse = {
   needs_review?: boolean;
   extracted_numbers?: Record<string, { series: string; number: string; full: string }>;
   recommended_passport_number?: { series: string; number: string };
+  passport_registration_validation?: {
+    status: "match" | "mismatch" | "not_found" | "main_not_found" | string;
+    main: { series: string; number: string; full: string };
+    registration: { series: string; number: string; full: string };
+    sources?: Record<string, string>;
+    source?: string;
+    message: string;
+  };
   extraction_debug?: Record<string, string>;
 };
 

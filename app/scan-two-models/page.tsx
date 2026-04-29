@@ -5,7 +5,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildContractFromUnifiedJson,
   scanDocumentsUnifiedTwoModels,
+  type EgrnExtractData,
+  type PassportData,
   type UnifiedScanResponse,
+  type UnifiedTwoModelsScanResponse,
 } from "@/lib/api/passport";
 
 const MODELS = [
@@ -21,6 +24,39 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/jpg"
 const ALLOWED_DOC_MIME_TYPES = new Set([...ALLOWED_IMAGE_MIME_TYPES, "application/pdf"]);
 
 type UploadKey = "passportMain" | "passportRegistration" | "egrnExtract";
+
+const PASSPORT_MAIN_LABELS = {
+  issuing_authority: "Кем выдан",
+  issue_date: "Дата выдачи",
+  department_code: "Код подразделения",
+  passport_series: "Серия",
+  passport_number: "Номер",
+  surname: "Фамилия",
+  name: "Имя",
+  patronymic: "Отчество",
+  gender: "Пол",
+  birth_date: "Дата рождения",
+  birth_place: "Место рождения",
+};
+
+const REGISTRATION_LABELS = {
+  region: "Регион",
+  city: "Город",
+  settlement: "Населенный пункт",
+  street: "Улица",
+  house: "Дом",
+  building: "Корпус/строение",
+  apartment: "Квартира",
+  registration_date: "Дата регистрации",
+};
+
+const EGRN_LABELS = {
+  cadastral_number: "Кадастровый номер",
+  object_type: "Тип объекта",
+  address: "Адрес объекта",
+  area_sq_m: "Площадь, м2",
+  extract_date: "Дата выписки",
+};
 
 const UPLOAD_SLOTS: Array<{ key: UploadKey; title: string; subtitle: string }> = [
   {
@@ -83,7 +119,10 @@ export default function ScanTwoModelsPage() {
     qwen30: null,
     llama4: null,
   });
+  const [twoModelsResponse, setTwoModelsResponse] = useState<UnifiedTwoModelsScanResponse | null>(null);
   const [finalScanResult, setFinalScanResult] = useState<UnifiedScanResponse | null>(null);
+  const [editablePassportData, setEditablePassportData] = useState<PassportData | null>(null);
+  const [editableEgrnData, setEditableEgrnData] = useState<EgrnExtractData | null>(null);
   const [showFullJson, setShowFullJson] = useState(false);
   const [buildingContract, setBuildingContract] = useState(false);
   const [contractBlob, setContractBlob] = useState<Blob | null>(null);
@@ -103,7 +142,10 @@ export default function ScanTwoModelsPage() {
     }
     setFiles((prev) => ({ ...prev, [key]: f }));
     setResults({ qwen30: null, llama4: null });
+    setTwoModelsResponse(null);
     setFinalScanResult(null);
+    setEditablePassportData(null);
+    setEditableEgrnData(null);
     setShowFullJson(false);
     setContractBlob(null);
     setContractFilename(null);
@@ -127,6 +169,7 @@ export default function ScanTwoModelsPage() {
         egrnExtract: files.egrnExtract,
       };
       const response = await scanDocumentsUnifiedTwoModels(payload);
+      setTwoModelsResponse(response);
       setResults({
         qwen30: response.data.qwen30 ?? null,
         llama4: response.data.llama4scout ?? null,
@@ -148,6 +191,8 @@ export default function ScanTwoModelsPage() {
             }
           : baseResult;
       setFinalScanResult(finalResult);
+      setEditablePassportData(finalResult ? { ...finalResult.data.passport_main } : null);
+      setEditableEgrnData(finalResult ? { ...finalResult.data.egrn_extract } : null);
       setShowFullJson(false);
       setContractBlob(null);
       setContractFilename(null);
@@ -159,7 +204,10 @@ export default function ScanTwoModelsPage() {
       setCustomerPhoneOverride("");
     } catch (e: unknown) {
       setResults({ qwen30: null, llama4: null });
+      setTwoModelsResponse(null);
       setFinalScanResult(null);
+      setEditablePassportData(null);
+      setEditableEgrnData(null);
       setError(e instanceof Error ? e.message : "Неизвестная ошибка");
     } finally {
       setScanning(false);
@@ -171,8 +219,16 @@ export default function ScanTwoModelsPage() {
     setError(null);
     setBuildingContract(true);
     try {
+      const preparedScanResult: UnifiedScanResponse = {
+        ...finalScanResult,
+        data: {
+          ...finalScanResult.data,
+          passport_main: editablePassportData ?? finalScanResult.data.passport_main,
+          egrn_extract: editableEgrnData ?? finalScanResult.data.egrn_extract,
+        },
+      };
       const result = await buildContractFromUnifiedJson(
-        finalScanResult,
+        preparedScanResult,
         customerAddressOverride,
         ownershipBasisDocumentOverride,
         customerEmailOverride,
@@ -185,6 +241,14 @@ export default function ScanTwoModelsPage() {
     } finally {
       setBuildingContract(false);
     }
+  };
+
+  const handlePassportFieldChange = (key: keyof PassportData, value: string) => {
+    setEditablePassportData((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const handleEgrnFieldChange = (key: keyof EgrnExtractData, value: string) => {
+    setEditableEgrnData((prev) => (prev ? { ...prev, [key]: value } : prev));
   };
 
   useEffect(() => {
@@ -207,6 +271,53 @@ export default function ScanTwoModelsPage() {
       })),
     [results],
   );
+  const registrationValidation = twoModelsResponse?.passport_registration_validation;
+  const passportEntries = useMemo(() => {
+    if (!editablePassportData) return [];
+    return (Object.keys(PASSPORT_MAIN_LABELS) as Array<keyof typeof PASSPORT_MAIN_LABELS>).map(
+      (key) => ({
+        key,
+        label: PASSPORT_MAIN_LABELS[key],
+        value: editablePassportData[key as keyof PassportData],
+      }),
+    );
+  }, [editablePassportData]);
+  const registrationEntries = useMemo(() => {
+    if (!finalScanResult?.data.passport_registration) return [];
+    return (Object.keys(REGISTRATION_LABELS) as Array<keyof typeof REGISTRATION_LABELS>).map(
+      (key) => ({
+        key,
+        label: REGISTRATION_LABELS[key],
+        value:
+          finalScanResult.data.passport_registration[
+            key as keyof typeof finalScanResult.data.passport_registration
+          ],
+      }),
+    );
+  }, [finalScanResult]);
+  const egrnEntries = useMemo(() => {
+    if (!editableEgrnData) return [];
+    return (Object.keys(EGRN_LABELS) as Array<keyof typeof EGRN_LABELS>).map((key) => ({
+      key,
+      label: EGRN_LABELS[key],
+      value: editableEgrnData[key as keyof EgrnExtractData],
+    }));
+  }, [editableEgrnData]);
+  const registrationPassportFull = registrationValidation?.registration.full ?? "";
+  const canApplyRegistrationPassport =
+    registrationPassportFull.length === 10 && registrationValidation?.status !== "match";
+  const applyRegistrationPassportNumber = () => {
+    if (!canApplyRegistrationPassport) return;
+    setEditablePassportData((prev) =>
+      prev
+        ? {
+            ...prev,
+            passport_series: registrationPassportFull.slice(0, 4),
+            passport_number: registrationPassportFull.slice(4, 10),
+          }
+        : prev,
+    );
+  };
 
   return (
     <div className="relative min-h-screen text-black">
@@ -307,6 +418,42 @@ export default function ScanTwoModelsPage() {
                 </h2>
               </div>
 
+              {registrationValidation && (
+                <div
+                  className={[
+                    "mb-5 rounded-2xl border px-4 py-3 text-sm",
+                    registrationValidation.status === "match"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                      : "border-amber-200 bg-amber-50 text-amber-950",
+                  ].join(" ")}
+                >
+                  <p className="font-semibold">
+                    Проверка серии/номера паспорта с пропиской:{" "}
+                    {registrationValidation.status === "match" ? "совпадает" : "подсказка для сверки"}
+                  </p>
+                  <p className="mt-1">{registrationValidation.message}</p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <span className="font-semibold">Основная страница: </span>
+                      {registrationValidation.main.full || "не найдено"}
+                    </div>
+                    <div>
+                      <span className="font-semibold">Страница прописки: </span>
+                      {registrationValidation.registration.full || "не найдено"}
+                    </div>
+                  </div>
+                  {canApplyRegistrationPassport && (
+                    <button
+                      type="button"
+                      onClick={applyRegistrationPassportNumber}
+                      className="mt-3 rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 shadow-sm transition hover:bg-amber-100"
+                    >
+                      Подставить серию/номер со страницы прописки
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="mb-5">
                 <label
                   htmlFor="two-models-customer-address-override"
@@ -383,10 +530,66 @@ export default function ScanTwoModelsPage() {
               </button>
               {showFullJson && (
                 <pre className="mt-3 max-h-[min(420px,50vh)] overflow-auto rounded-2xl border border-(--ph-border) bg-(--ph-pre-bg) p-4 text-xs leading-relaxed text-(--ph-muted) shadow-inner">
-                  {JSON.stringify(finalScanResult, null, 2)}
+                  {JSON.stringify(twoModelsResponse ?? finalScanResult, null, 2)}
                 </pre>
               )}
             </section>
+
+            {[
+              { key: "passportMain" as const, title: "Паспорт (основная страница)", entries: passportEntries },
+              {
+                key: "passportRegistration" as const,
+                title: "Паспорт (страница с пропиской)",
+                entries: registrationEntries,
+              },
+              { key: "egrnExtract" as const, title: "Выписка ЕГРН", entries: egrnEntries },
+            ].map((block) => (
+              <section
+                key={block.key}
+                className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8"
+              >
+                <h3 className="mb-4 text-lg font-semibold text-black">{block.title}</h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {block.entries.map(({ key, label, value }) => (
+                    <div
+                      key={key}
+                      className="rounded-2xl border border-slate-200/90 bg-slate-50/50 px-4 py-3.5 shadow-sm transition hover:border-blue-200/80 hover:bg-white hover:shadow-md"
+                    >
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-black">
+                        {label}
+                      </div>
+                      {block.key === "passportMain" ? (
+                        <input
+                          type="text"
+                          value={String(value ?? "")}
+                          onChange={(e) =>
+                            handlePassportFieldChange(key as keyof PassportData, e.target.value)
+                          }
+                          className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium leading-snug text-black focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        />
+                      ) : block.key === "egrnExtract" ? (
+                        <input
+                          type="text"
+                          value={String(value ?? "")}
+                          onChange={(e) =>
+                            handleEgrnFieldChange(key as keyof EgrnExtractData, e.target.value)
+                          }
+                          className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium leading-snug text-black focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        />
+                      ) : (
+                        <div className="mt-1.5 wrap-break-word text-sm font-medium leading-snug text-black">
+                          {Array.isArray(value)
+                            ? value.length
+                              ? value.join(", ")
+                              : "—"
+                            : String(value || "").trim() || "—"}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
 
             <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
               <div className="flex flex-wrap items-center gap-3">
@@ -403,6 +606,11 @@ export default function ScanTwoModelsPage() {
                   )}
                   Создать договор (.docx)
                 </button>
+                {registrationValidation && registrationValidation.status !== "match" && (
+                  <p className="text-sm font-medium text-amber-700">
+                    Проверьте серию/номер перед созданием договора. Валидация не блокирует генерацию.
+                  </p>
+                )}
                 {contractBlob && downloadHref && (
                   <a
                     href={downloadHref}
