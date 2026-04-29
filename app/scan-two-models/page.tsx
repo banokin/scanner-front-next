@@ -8,7 +8,7 @@ import {
 } from "@/lib/api/passport";
 
 const MODELS = [
-  { key: "qwen30", title: "Qwen 30B", modelId: "Qwen/Qwen2.5-VL-32B-Instruct:novita" },
+  { key: "qwen30", title: "Qwen 30B", modelId: "Qwen/Qwen3-VL-30B-A3B-Instruct:novita" },
   {
     key: "llama4",
     title: "Llama 4 Scout",
