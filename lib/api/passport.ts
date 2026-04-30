@@ -90,6 +90,7 @@ export type UnifiedScanResponse = {
     passport_registration: string;
     egrn_extract: string;
     _files?: string;
+    _ai_validation?: string;
     _warnings?: string;
   };
 };

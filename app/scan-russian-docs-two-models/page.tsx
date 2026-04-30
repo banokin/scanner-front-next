@@ -15,6 +15,17 @@ const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/we
 
 type UploadKey = "passportMain" | "passportRegistration" | "egrnExtract";
 
+type AiValidationResult = {
+  model?: string;
+  warnings?: Array<{
+    field?: keyof PassportData | "ai_validation" | string;
+    current?: string;
+    issue?: string;
+    suggestion?: string;
+  }>;
+  corrected_fields?: Partial<Record<keyof PassportData, string>>;
+};
+
 const UPLOAD_SLOTS: Array<{ key: UploadKey; title: string; subtitle: string }> = [
   {
     key: "passportMain",
@@ -138,6 +149,12 @@ export default function ScanRussianDocsTwoModelsPage() {
     ),
     [result?.raw_text._files],
   );
+  const aiValidation = useMemo(
+    () => parseRawJson<AiValidationResult | null>(result?.raw_text._ai_validation, null),
+    [result?.raw_text._ai_validation],
+  );
+  const aiCorrections = aiValidation?.corrected_fields ?? {};
+  const aiWarnings = aiValidation?.warnings ?? [];
 
   useEffect(() => {
     if (!contractBlob) {
@@ -246,6 +263,10 @@ export default function ScanRussianDocsTwoModelsPage() {
 
   const handleEgrnFieldChange = (key: keyof EgrnExtractData, value: string) => {
     setEditableEgrnData((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const applyAiPassportCorrections = () => {
+    setEditablePassportData((prev) => (prev ? { ...prev, ...aiCorrections } : prev));
   };
 
   return (
@@ -359,21 +380,76 @@ export default function ScanRussianDocsTwoModelsPage() {
                 <p className="mb-6 text-sm text-slate-600">
                   Основной разворот распознан через RussianDocsOCR. Проверьте поля перед созданием договора.
                 </p>
+                {aiWarnings.length > 0 && (
+                  <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">AI-валидация слов паспорта</p>
+                        <p className="mt-1 text-xs text-amber-800">model: {aiValidation?.model ?? "unknown"}</p>
+                      </div>
+                      {Object.keys(aiCorrections).length > 0 && (
+                        <button
+                          type="button"
+                          onClick={applyAiPassportCorrections}
+                          className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700"
+                        >
+                          Применить AI-исправления
+                        </button>
+                      )}
+                    </div>
+                    <ul className="mt-3 space-y-2">
+                      {aiWarnings.map((warning, index) => (
+                        <li key={`${warning.field ?? "field"}-${index}`} className="rounded-xl bg-white/70 px-3 py-2">
+                          <p className="font-semibold">{warning.field ?? "Поле"}</p>
+                          <p>{warning.issue}</p>
+                          {warning.current && <p className="text-xs text-amber-800">Сейчас: {warning.current}</p>}
+                          {warning.suggestion && (
+                            <p className="text-xs text-emerald-800">Предложение: {warning.suggestion}</p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {PASSPORT_FIELDS.map((field) => (
-                    <label key={field.key} className="block rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                        {field.label}
-                      </span>
-                      <input
-                        type="text"
-                        value={String(editablePassportData[field.key] ?? "")}
-                        placeholder={field.placeholder}
-                        onChange={(e) => handlePassportFieldChange(field.key, e.target.value)}
-                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                      />
-                    </label>
-                  ))}
+                  {PASSPORT_FIELDS.map((field) => {
+                    const aiSuggestion = aiCorrections[field.key];
+                    const hasSuggestion = Boolean(aiSuggestion && aiSuggestion !== editablePassportData[field.key]);
+                    return (
+                      <label
+                        key={field.key}
+                        className={[
+                          "block rounded-2xl border bg-slate-50/60 px-4 py-3",
+                          hasSuggestion ? "border-amber-300 ring-1 ring-amber-200" : "border-slate-200",
+                        ].join(" ")}
+                      >
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                          {field.label}
+                        </span>
+                        <input
+                          type="text"
+                          value={String(editablePassportData[field.key] ?? "")}
+                          placeholder={field.placeholder}
+                          onChange={(e) => handlePassportFieldChange(field.key, e.target.value)}
+                          className={[
+                            "mt-1.5 w-full rounded-lg border bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:outline-none focus:ring-2",
+                            hasSuggestion
+                              ? "border-amber-300 focus:border-amber-400 focus:ring-amber-200"
+                              : "border-slate-300 focus:border-blue-400 focus:ring-blue-200",
+                          ].join(" ")}
+                        />
+                        {hasSuggestion && (
+                          <button
+                            type="button"
+                            onClick={() => handlePassportFieldChange(field.key, String(aiSuggestion))}
+                            className="mt-2 text-xs font-semibold text-amber-700 underline"
+                          >
+                            Применить: {aiSuggestion}
+                          </button>
+                        )}
+                      </label>
+                    );
+                  })}
                 </div>
               </section>
             )}
