@@ -76,6 +76,12 @@ export default function RootLayout({
               RussianDocsOCR
             </Link>
             <Link
+              href="/scan-russian-docs-two-models"
+              className="rounded-lg px-3 py-2 font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
+            >
+              RussianDocs + 2 модели
+            </Link>
+            <Link
               href="/scan-deepseek-qwen"
               className="rounded-lg px-3 py-2 font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
             >

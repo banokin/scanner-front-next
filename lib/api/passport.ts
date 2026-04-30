@@ -9,6 +9,7 @@ const UNIFIED_CONTRACT_API_URL = `${API_BASE_URL}/unified-json-to-contract`;
 const PASPREAD_SCAN_API_URL = `${API_BASE_URL}/scan-passport-paspread`;
 const RUSSIAN_DOCS_OCR_SCAN_API_URL = `${API_BASE_URL}/scan-passport-russian-docs-ocr`;
 const RUSSIAN_DOCS_OCR_UNIFIED_SCAN_API_URL = `${API_BASE_URL}/scan-documents-russian-docs-ocr`;
+const RUSSIAN_DOCS_TWO_MODELS_SCAN_API_URL = `${API_BASE_URL}/scan-documents-russian-docs-two-models`;
 const DEEPSEEK_QWEN_SCAN_API_URL = `${API_BASE_URL}/scan-passport-deepseek-qwen`;
 
 const HF_SEC = Number(process.env.NEXT_PUBLIC_HF_REQUEST_TIMEOUT_SEC ?? 90);
@@ -88,6 +89,8 @@ export type UnifiedScanResponse = {
     passport_main: string;
     passport_registration: string;
     egrn_extract: string;
+    _files?: string;
+    _warnings?: string;
   };
 };
 
@@ -291,9 +294,13 @@ export async function scanDocumentsRussianDocsOcr(files: {
   egrnExtract: File;
 }): Promise<UnifiedScanResponse> {
   console.info("[russian-docs-ocr-unified] request:start", {
-    passportMain: files.passportMain.name,
-    passportRegistration: files.passportRegistration.name,
-    egrnExtract: files.egrnExtract.name,
+    passportMain: { name: files.passportMain.name, size: files.passportMain.size, type: files.passportMain.type },
+    passportRegistration: {
+      name: files.passportRegistration.name,
+      size: files.passportRegistration.size,
+      type: files.passportRegistration.type,
+    },
+    egrnExtract: { name: files.egrnExtract.name, size: files.egrnExtract.size, type: files.egrnExtract.type },
   });
   const form = new FormData();
   form.append("passport_main", files.passportMain);
@@ -317,6 +324,46 @@ export async function scanDocumentsRussianDocsOcr(files: {
     throw toNetworkError(
       error,
       `Превышено время ожидания RussianDocsOCR (${Math.round(RUSSIAN_DOCS_OCR_FETCH_TIMEOUT_MS / 1000)} с). Проверьте backend и optional зависимости RussianDocsOCR.`,
+    );
+  }
+}
+
+export async function scanDocumentsRussianDocsTwoModels(files: {
+  passportMain: File;
+  passportRegistration: File;
+  egrnExtract: File;
+}): Promise<UnifiedScanResponse> {
+  console.info("[russian-docs-two-models] request:start", {
+    passportMain: { name: files.passportMain.name, size: files.passportMain.size, type: files.passportMain.type },
+    passportRegistration: {
+      name: files.passportRegistration.name,
+      size: files.passportRegistration.size,
+      type: files.passportRegistration.type,
+    },
+    egrnExtract: { name: files.egrnExtract.name, size: files.egrnExtract.size, type: files.egrnExtract.type },
+  });
+  const form = new FormData();
+  form.append("passport_main", files.passportMain);
+  form.append("passport_registration", files.passportRegistration);
+  form.append("egrn_extract", files.egrnExtract);
+  try {
+    const response = await fetchWithTimeout(
+      RUSSIAN_DOCS_TWO_MODELS_SCAN_API_URL,
+      { method: "POST", body: form },
+      FETCH_TIMEOUT_MS,
+    );
+    console.info("[russian-docs-two-models] response", { ok: response.ok, status: response.status });
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    const payload = (await response.json()) as UnifiedScanResponse;
+    console.info("[russian-docs-two-models] success", { model: payload.model });
+    return payload;
+  } catch (error: unknown) {
+    console.error("[russian-docs-two-models] failed", error);
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания mixed RussianDocsOCR + two-models (${Math.round(FETCH_TIMEOUT_MS / 1000)} с). Проверьте backend, HF_TOKEN и доступность моделей.`,
     );
   }
 }

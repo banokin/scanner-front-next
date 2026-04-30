@@ -104,12 +104,76 @@ function validatePassportFio(data: PassportData | null): Partial<Record<keyof Pa
   };
 }
 
+function looksLikeIssuingAuthority(value: string): boolean {
+  const text = String(value ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  if (!text) return false;
+  const hasAuthorityWords = /(ОТДЕЛОМ|ОТДЕЛ\s+|УФМС|МВД|ГУВМ|ОВД|РОССИИ|ВЫДАН|КОД\s+ПОДРАЗД)/.test(text);
+  const hasAddressWords = /(УЛ\.|УЛИЦА|Д\.|ДОМ|КВ\.|КВАРТИРА|ПР-КТ|ПРОСПЕКТ|ПЕР\.|ПЕРЕУЛОК|Ш\.|ШОССЕ)/.test(text);
+  return hasAuthorityWords && !hasAddressWords;
+}
+
+function validateRegistrationAddress(data: PassportRegistrationData | null): Partial<Record<keyof PassportRegistrationData, string[]>> {
+  if (!data) return {};
+  const warnings: Partial<Record<keyof PassportRegistrationData, string[]>> = {};
+  if (!data.address?.trim()) {
+    warnings.address = ["Адрес регистрации не заполнен"];
+  }
+  for (const key of ["address", "region", "city", "settlement", "street"] as const) {
+    if (looksLikeIssuingAuthority(data[key])) {
+      warnings[key] = [
+        ...(warnings[key] ?? []),
+        "Похоже на орган выдачи паспорта, а не на адрес регистрации",
+      ];
+    }
+  }
+  return warnings;
+}
+
+function validateEgrnData(
+  data: EgrnExtractData | null,
+  passport: PassportData | null,
+): Partial<Record<keyof EgrnExtractData, string[]>> {
+  if (!data) return {};
+  const warnings: Partial<Record<keyof EgrnExtractData, string[]>> = {};
+  const hasCoreFields = Boolean(data.cadastral_number || data.address || data.right_holders?.length);
+  if (!hasCoreFields) {
+    warnings.address = ["Данные ЕГРН не распознаны, заполните вручную"];
+    warnings.cadastral_number = ["Кадастровый номер не распознан"];
+  }
+  const passportDates = new Set([passport?.birth_date, passport?.issue_date].filter(Boolean));
+  if (data.extract_date && passportDates.has(data.extract_date)) {
+    warnings.extract_date = ["Похоже на дату из паспорта, а не на дату выписки ЕГРН"];
+  }
+  if (looksLikeIssuingAuthority(data.address)) {
+    warnings.address = [
+      ...(warnings.address ?? []),
+      "Похоже на орган выдачи паспорта, а не на адрес объекта",
+    ];
+  }
+  return warnings;
+}
+
+function sanitizeEgrnDataForUi(data: EgrnExtractData, passport: PassportData): EgrnExtractData {
+  const passportDates = new Set([passport.birth_date, passport.issue_date].filter(Boolean));
+  const hasCoreFields = Boolean(data.cadastral_number || data.address || data.right_holders?.length);
+  if (!hasCoreFields && data.extract_date && passportDates.has(data.extract_date)) {
+    return { ...data, extract_date: "" };
+  }
+  if (looksLikeIssuingAuthority(data.address)) {
+    return { ...data, address: "" };
+  }
+  return data;
+}
+
 function buildRegistrationAddress(registration: UnifiedScanResponse["data"]["passport_registration"]): string {
+  if (looksLikeIssuingAuthority(registration.address)) {
+    return "";
+  }
   const parts = [
-    registration.region,
-    registration.city,
-    registration.settlement,
-    registration.street,
+    looksLikeIssuingAuthority(registration.region) ? "" : registration.region,
+    looksLikeIssuingAuthority(registration.city) ? "" : registration.city,
+    looksLikeIssuingAuthority(registration.settlement) ? "" : registration.settlement,
+    looksLikeIssuingAuthority(registration.street) ? "" : registration.street,
     registration.house ? `д. ${registration.house}` : "",
     registration.building ? `корп. ${registration.building}` : "",
     registration.apartment ? `кв. ${registration.apartment}` : "",
@@ -117,6 +181,34 @@ function buildRegistrationAddress(registration: UnifiedScanResponse["data"]["pas
     .map((part) => String(part ?? "").trim())
     .filter(Boolean);
   return registration.address?.trim() || parts.join(", ");
+}
+
+function findDuplicateFileWarnings(files: Record<UploadKey, File | null>): string[] {
+  const entries = Object.entries(files).filter((entry): entry is [UploadKey, File] => Boolean(entry[1]));
+  const warnings: string[] = [];
+  for (let i = 0; i < entries.length; i += 1) {
+    for (let j = i + 1; j < entries.length; j += 1) {
+      const [leftKey, left] = entries[i];
+      const [rightKey, right] = entries[j];
+      const sameNameAndSize = left.name === right.name && left.size === right.size;
+      const sameFileObject = left === right;
+      if (sameFileObject || sameNameAndSize) {
+        const leftTitle = UPLOAD_SLOTS.find((slot) => slot.key === leftKey)?.title ?? leftKey;
+        const rightTitle = UPLOAD_SLOTS.find((slot) => slot.key === rightKey)?.title ?? rightKey;
+        warnings.push(`${leftTitle} и ${rightTitle}: похоже выбран один и тот же файл`);
+      }
+    }
+  }
+  return warnings;
+}
+
+function parseRawJson<T>(value: string | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 export default function ScanRussianDocsOcrPage() {
@@ -177,6 +269,28 @@ export default function ScanRussianDocsOcrPage() {
   const allFilesSelected = Boolean(files.passportMain && files.passportRegistration && files.egrnExtract);
   const fioWarningsByField = useMemo(() => validatePassportFio(editablePassportData), [editablePassportData]);
   const fioWarnings = Object.values(fioWarningsByField).flat();
+  const registrationWarningsByField = useMemo(
+    () => validateRegistrationAddress(editableRegistrationData),
+    [editableRegistrationData],
+  );
+  const registrationWarnings = Object.values(registrationWarningsByField).flat();
+  const egrnWarningsByField = useMemo(
+    () => validateEgrnData(editableEgrnData, editablePassportData),
+    [editableEgrnData, editablePassportData],
+  );
+  const egrnWarnings = Object.values(egrnWarningsByField).flat();
+  const duplicateFileWarnings = useMemo(() => findDuplicateFileWarnings(files), [files]);
+  const backendFilesDebug = useMemo(
+    () => parseRawJson<Record<string, { filename: string; bytes: number; sha256_12: string }>>(
+      result?.raw_text._files,
+      {},
+    ),
+    [result?.raw_text._files],
+  );
+  const backendFileWarnings = useMemo(
+    () => parseRawJson<string[]>(result?.raw_text._warnings, []),
+    [result?.raw_text._warnings],
+  );
 
   const preparedResult = useMemo<UnifiedScanResponse | null>(() => {
     if (!result) return null;
@@ -215,10 +329,11 @@ export default function ScanRussianDocsOcrPage() {
         egrnExtract: files.egrnExtract,
       });
       console.info("[scan-russian-docs-ocr-page] scan:success", { model: payload.model });
+      const passportData = { ...payload.data.passport_main };
       setResult(payload);
-      setEditablePassportData({ ...payload.data.passport_main });
+      setEditablePassportData(passportData);
       setEditableRegistrationData({ ...payload.data.passport_registration });
-      setEditableEgrnData({ ...payload.data.egrn_extract });
+      setEditableEgrnData(sanitizeEgrnDataForUi({ ...payload.data.egrn_extract }, passportData));
       setCustomerAddressOverride(buildRegistrationAddress(payload.data.passport_registration));
       setOwnershipBasisDocumentOverride("");
       setCustomerEmailOverride("");
@@ -268,12 +383,7 @@ export default function ScanRussianDocsOcrPage() {
     setEditableRegistrationData((prev) => {
       if (!prev) return prev;
       const next = { ...prev, [key]: value };
-      if (key !== "address") {
-        setCustomerAddressOverride(buildRegistrationAddress(next));
-      }
-      if (key === "address") {
-        setCustomerAddressOverride(value);
-      }
+      setCustomerAddressOverride(buildRegistrationAddress(next));
       return next;
     });
   };
@@ -295,6 +405,34 @@ export default function ScanRussianDocsOcrPage() {
             Режим фиксирован: <span className="font-semibold">ONNX</span>, устройство{" "}
             <span className="font-semibold">cpu</span>.
           </div>
+          {duplicateFileWarnings.length > 0 && (
+            <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              <p className="font-semibold">Проверьте выбранные файлы</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5">
+                {duplicateFileWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {Object.keys(backendFilesDebug).length > 0 && (
+            <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">
+              <p className="mb-2 text-sm font-semibold text-slate-900">Файлы, полученные backend</p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {Object.entries(backendFilesDebug).map(([key, meta]) => (
+                  <div key={key} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                    <p className="font-semibold text-slate-900">{key}</p>
+                    <p className="truncate">{meta.filename}</p>
+                    <p>{meta.bytes} bytes</p>
+                    <p>sha: {meta.sha256_12}</p>
+                  </div>
+                ))}
+              </div>
+              {backendFileWarnings.length > 0 && (
+                <p className="mt-2 text-amber-700">{backendFileWarnings.join("; ")}</p>
+              )}
+            </div>
+          )}
 
           <div className="space-y-5">
             {UPLOAD_SLOTS.map((slot) => {
@@ -426,26 +564,47 @@ export default function ScanRussianDocsOcrPage() {
             <p className="mb-6 text-sm text-slate-600">
               Если RussianDocsOCR распознал страницу прописки как другой документ, заполните адрес вручную.
             </p>
+            {registrationWarnings.length > 0 && (
+              <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <p className="font-semibold">Адрес прописки требует проверки</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {registrationWarnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
-              {REGISTRATION_FIELDS.map((field) => (
-                <label
-                  key={field.key}
-                  className={[
-                    "block rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3",
-                    field.key === "address" ? "sm:col-span-2" : "",
-                  ].join(" ")}
-                >
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                    {field.label}
-                  </span>
-                  <input
-                    type="text"
-                    value={String(editableRegistrationData[field.key] ?? "")}
-                    onChange={(e) => handleRegistrationFieldChange(field.key, e.target.value)}
-                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  />
-                </label>
-              ))}
+              {REGISTRATION_FIELDS.map((field) => {
+                const fieldWarnings = registrationWarningsByField[field.key] ?? [];
+                const hasWarning = fieldWarnings.length > 0;
+                return (
+                  <label
+                    key={field.key}
+                    className={[
+                      "block rounded-2xl border bg-slate-50/60 px-4 py-3",
+                      field.key === "address" ? "sm:col-span-2" : "",
+                      hasWarning ? "border-amber-300 ring-1 ring-amber-200" : "border-slate-200",
+                    ].join(" ")}
+                  >
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                      {field.label}
+                    </span>
+                    <input
+                      type="text"
+                      value={String(editableRegistrationData[field.key] ?? "")}
+                      onChange={(e) => handleRegistrationFieldChange(field.key, e.target.value)}
+                      className={[
+                        "mt-1.5 w-full rounded-lg border bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:outline-none focus:ring-2",
+                        hasWarning
+                          ? "border-amber-300 focus:border-amber-400 focus:ring-amber-200"
+                          : "border-slate-300 focus:border-blue-400 focus:ring-blue-200",
+                      ].join(" ")}
+                    />
+                    {hasWarning && <p className="mt-1.5 text-xs text-amber-700">{fieldWarnings.join("; ")}</p>}
+                  </label>
+                );
+              })}
             </div>
           </section>
         )}
@@ -454,24 +613,50 @@ export default function ScanRussianDocsOcrPage() {
           <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
             <h2 className="mb-1 text-lg font-semibold text-black">Данные ЕГРН для договора</h2>
             <p className="mb-6 text-sm text-slate-600">Если RussianDocsOCR не распознал ЕГРН, заполните поля вручную.</p>
+            {egrnWarnings.length > 0 && (
+              <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <p className="font-semibold">ЕГРН требует проверки</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {egrnWarnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
-              {EGRN_FIELDS.map((field) => (
-                <label key={field.key} className="block rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                    {field.label}
-                  </span>
-                  <input
-                    type="text"
-                    value={
-                      Array.isArray(editableEgrnData[field.key])
-                        ? (editableEgrnData[field.key] as string[]).join(", ")
-                        : String(editableEgrnData[field.key] ?? "")
-                    }
-                    onChange={(e) => handleEgrnFieldChange(field.key, e.target.value)}
-                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                  />
-                </label>
-              ))}
+              {EGRN_FIELDS.map((field) => {
+                const fieldWarnings = egrnWarningsByField[field.key] ?? [];
+                const hasWarning = fieldWarnings.length > 0;
+                return (
+                  <label
+                    key={field.key}
+                    className={[
+                      "block rounded-2xl border bg-slate-50/60 px-4 py-3",
+                      hasWarning ? "border-amber-300 ring-1 ring-amber-200" : "border-slate-200",
+                    ].join(" ")}
+                  >
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                      {field.label}
+                    </span>
+                    <input
+                      type="text"
+                      value={
+                        Array.isArray(editableEgrnData[field.key])
+                          ? (editableEgrnData[field.key] as string[]).join(", ")
+                          : String(editableEgrnData[field.key] ?? "")
+                      }
+                      onChange={(e) => handleEgrnFieldChange(field.key, e.target.value)}
+                      className={[
+                        "mt-1.5 w-full rounded-lg border bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:outline-none focus:ring-2",
+                        hasWarning
+                          ? "border-amber-300 focus:border-amber-400 focus:ring-amber-200"
+                          : "border-slate-300 focus:border-blue-400 focus:ring-blue-200",
+                      ].join(" ")}
+                    />
+                    {hasWarning && <p className="mt-1.5 text-xs text-amber-700">{fieldWarnings.join("; ")}</p>}
+                  </label>
+                );
+              })}
               <label className="block rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3 sm:col-span-2">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
                   Правообладатели
