@@ -21,6 +21,9 @@ const TESSERACT_FETCH_TIMEOUT_MS = Number(
 const RUSSIAN_DOCS_OCR_FETCH_TIMEOUT_MS = Number(
   process.env.NEXT_PUBLIC_RUSSIAN_DOCS_OCR_TIMEOUT_MS ?? 420_000,
 );
+const RUSSIAN_DOCS_TWO_MODELS_FETCH_TIMEOUT_MS = Number(
+  process.env.NEXT_PUBLIC_RUSSIAN_DOCS_TWO_MODELS_TIMEOUT_MS ?? 420_000,
+);
 const PASPREAD_FETCH_TIMEOUT_MS = Number(
   process.env.NEXT_PUBLIC_PASPREAD_TIMEOUT_MS ?? 45_000,
 );
@@ -351,7 +354,7 @@ export async function scanDocumentsRussianDocsTwoModels(files: {
     const response = await fetchWithTimeout(
       RUSSIAN_DOCS_TWO_MODELS_SCAN_API_URL,
       { method: "POST", body: form },
-      FETCH_TIMEOUT_MS,
+      RUSSIAN_DOCS_TWO_MODELS_FETCH_TIMEOUT_MS,
     );
     console.info("[russian-docs-two-models] response", { ok: response.ok, status: response.status });
     if (!response.ok) {
@@ -364,7 +367,7 @@ export async function scanDocumentsRussianDocsTwoModels(files: {
     console.error("[russian-docs-two-models] failed", error);
     throw toNetworkError(
       error,
-      `Превышено время ожидания mixed RussianDocsOCR + two-models (${Math.round(FETCH_TIMEOUT_MS / 1000)} с). Проверьте backend, HF_TOKEN и доступность моделей.`,
+      `Превышено время ожидания mixed RussianDocsOCR + two-models (${Math.round(RUSSIAN_DOCS_TWO_MODELS_FETCH_TIMEOUT_MS / 1000)} с). Проверьте backend, HF_TOKEN и доступность моделей.`,
     );
   }
 }
