@@ -6,6 +6,9 @@ const UNIFIED_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified`;
 const UNIFIED_TWO_MODELS_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified-two-models`;
 const UNIFIED_TESSERACT_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified-tesseract`;
 const UNIFIED_CONTRACT_API_URL = `${API_BASE_URL}/unified-json-to-contract`;
+const PASPREAD_SCAN_API_URL = `${API_BASE_URL}/scan-passport-paspread`;
+const RUSSIAN_DOCS_OCR_SCAN_API_URL = `${API_BASE_URL}/scan-passport-russian-docs-ocr`;
+const DEEPSEEK_QWEN_SCAN_API_URL = `${API_BASE_URL}/scan-passport-deepseek-qwen`;
 
 const HF_SEC = Number(process.env.NEXT_PUBLIC_HF_REQUEST_TIMEOUT_SEC ?? 90);
 const FETCH_TIMEOUT_MS = (10 + HF_SEC + 45) * 1000;
@@ -207,6 +210,104 @@ export async function scanPassport(file: File): Promise<ScanResponse> {
     throw toNetworkError(
       error,
       `Превышено время ожидания (бэкенд HF ~${HF_SEC} с). Убедитесь, что uvicorn запущен; при перегрузке HF увеличьте HF_REQUEST_TIMEOUT_SEC.`,
+    );
+  }
+}
+
+export async function scanPassportPaspread(file: File): Promise<ScanResponse> {
+  console.info("[paspread] request:start", { file: file.name, size: file.size, type: file.type });
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const response = await fetchWithTimeout(
+      PASPREAD_SCAN_API_URL,
+      { method: "POST", body: form },
+      TESSERACT_FETCH_TIMEOUT_MS,
+    );
+    console.info("[paspread] response", { ok: response.ok, status: response.status });
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    const payload = (await response.json()) as ScanResponse;
+    console.info("[paspread] success", { model: payload.model });
+    return payload;
+  } catch (error: unknown) {
+    console.error("[paspread] failed", error);
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания paspread (${Math.round(TESSERACT_FETCH_TIMEOUT_MS / 1000)} с). Проверьте, что uvicorn запущен, Tesseract и rupasportread установлены.`,
+    );
+  }
+}
+
+export async function scanPassportRussianDocsOcr(
+  file: File,
+  options?: {
+    modelFormat?: string;
+    device?: string;
+    checkQuality?: boolean;
+    imgSize?: number;
+  },
+): Promise<ScanResponse> {
+  console.info("[russian-docs-ocr] request:start", { file: file.name, size: file.size, type: file.type, options });
+  const form = new FormData();
+  form.append("file", file);
+  form.append("model_format", options?.modelFormat ?? "ONNX");
+  form.append("device", options?.device ?? "cpu");
+  form.append("check_quality", String(options?.checkQuality ?? false));
+  form.append("img_size", String(options?.imgSize ?? 1500));
+  try {
+    const response = await fetchWithTimeout(
+      RUSSIAN_DOCS_OCR_SCAN_API_URL,
+      { method: "POST", body: form },
+      TESSERACT_FETCH_TIMEOUT_MS,
+    );
+    console.info("[russian-docs-ocr] response", { ok: response.ok, status: response.status });
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    const payload = (await response.json()) as ScanResponse;
+    console.info("[russian-docs-ocr] success", { model: payload.model });
+    return payload;
+  } catch (error: unknown) {
+    console.error("[russian-docs-ocr] failed", error);
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания RussianDocsOCR (${Math.round(TESSERACT_FETCH_TIMEOUT_MS / 1000)} с). Проверьте установку document_processing и моделей.`,
+    );
+  }
+}
+
+export async function scanPassportDeepseekQwen(
+  file: File,
+  options?: {
+    ocrPrompt?: string;
+    timeoutSec?: number;
+  },
+): Promise<ScanResponse> {
+  console.info("[deepseek-qwen] request:start", { file: file.name, size: file.size, type: file.type, options });
+  const form = new FormData();
+  form.append("file", file);
+  form.append("ocr_prompt", options?.ocrPrompt ?? "Free OCR.");
+  form.append("timeout_sec", String(options?.timeoutSec ?? 180));
+  try {
+    const response = await fetchWithTimeout(
+      DEEPSEEK_QWEN_SCAN_API_URL,
+      { method: "POST", body: form },
+      TESSERACT_FETCH_TIMEOUT_MS,
+    );
+    console.info("[deepseek-qwen] response", { ok: response.ok, status: response.status });
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    const payload = (await response.json()) as ScanResponse;
+    console.info("[deepseek-qwen] success", { model: payload.model });
+    return payload;
+  } catch (error: unknown) {
+    console.error("[deepseek-qwen] failed", error);
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания DeepSeek-OCR + Qwen (${Math.round(TESSERACT_FETCH_TIMEOUT_MS / 1000)} с). Проверьте backend, HF_TOKEN и доступность моделей Hugging Face.`,
     );
   }
 }

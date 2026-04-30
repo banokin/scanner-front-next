@@ -63,6 +63,24 @@ export default function RootLayout({
             >
               3 документа · 2 модели
             </Link>
+            <Link
+              href="/scan-paspread"
+              className="rounded-lg px-3 py-2 font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
+            >
+              paspread
+            </Link>
+            <Link
+              href="/scan-russian-docs-ocr"
+              className="rounded-lg px-3 py-2 font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
+            >
+              RussianDocsOCR
+            </Link>
+            <Link
+              href="/scan-deepseek-qwen"
+              className="rounded-lg px-3 py-2 font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
+            >
+              DeepSeek + Qwen
+            </Link>
           </nav>
         </header>
         <div className="passport-hf-root flex-1 font-sans antialiased">{children}</div>
