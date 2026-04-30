@@ -5,6 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildContractFromUnifiedJson,
   scanDocumentsRussianDocsTwoModels,
+  type EgrnExtractData,
+  type PassportData,
+  type PassportRegistrationData,
   type UnifiedScanResponse,
 } from "@/lib/api/passport";
 
@@ -30,11 +33,45 @@ const UPLOAD_SLOTS: Array<{ key: UploadKey; title: string; subtitle: string }> =
   },
 ];
 
+const PASSPORT_FIELDS: Array<{ key: keyof PassportData; label: string; placeholder?: string }> = [
+  { key: "surname", label: "Фамилия" },
+  { key: "name", label: "Имя" },
+  { key: "patronymic", label: "Отчество" },
+  { key: "passport_series", label: "Серия паспорта", placeholder: "1234" },
+  { key: "passport_number", label: "Номер паспорта", placeholder: "567890" },
+  { key: "issuing_authority", label: "Кем выдан" },
+  { key: "issue_date", label: "Дата выдачи", placeholder: "дд.мм.гггг" },
+  { key: "department_code", label: "Код подразделения", placeholder: "123-456" },
+  { key: "birth_date", label: "Дата рождения", placeholder: "дд.мм.гггг" },
+  { key: "birth_place", label: "Место рождения" },
+  { key: "gender", label: "Пол" },
+];
+
+const REGISTRATION_FIELDS: Array<{ key: keyof PassportRegistrationData; label: string }> = [
+  { key: "address", label: "Адрес регистрации полностью" },
+  { key: "region", label: "Регион" },
+  { key: "city", label: "Город" },
+  { key: "settlement", label: "Населенный пункт" },
+  { key: "street", label: "Улица" },
+  { key: "house", label: "Дом" },
+  { key: "building", label: "Корпус/строение" },
+  { key: "apartment", label: "Квартира" },
+  { key: "registration_date", label: "Дата регистрации" },
+];
+
+const EGRN_FIELDS: Array<{ key: keyof EgrnExtractData; label: string }> = [
+  { key: "cadastral_number", label: "Кадастровый номер" },
+  { key: "object_type", label: "Тип объекта" },
+  { key: "address", label: "Адрес объекта" },
+  { key: "area_sq_m", label: "Площадь, м2" },
+  { key: "ownership_type", label: "Вид собственности" },
+  { key: "extract_date", label: "Дата выписки" },
+];
+
 const isAllowedFile = (file: File): boolean =>
   ALLOWED_TYPES.has(file.type) || (file.type === "" && file.name.toLowerCase().endsWith(".pdf"));
 
-function registrationAddress(result: UnifiedScanResponse | null): string {
-  const registration = result?.data.passport_registration;
+function registrationAddress(registration: PassportRegistrationData | null): string {
   if (!registration) return "";
   const parts = [
     registration.region,
@@ -70,6 +107,9 @@ export default function ScanRussianDocsTwoModelsPage() {
   const [buildingContract, setBuildingContract] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<UnifiedScanResponse | null>(null);
+  const [editablePassportData, setEditablePassportData] = useState<PassportData | null>(null);
+  const [editableRegistrationData, setEditableRegistrationData] = useState<PassportRegistrationData | null>(null);
+  const [editableEgrnData, setEditableEgrnData] = useState<EgrnExtractData | null>(null);
   const [customerAddressOverride, setCustomerAddressOverride] = useState("");
   const [ownershipBasisDocumentOverride, setOwnershipBasisDocumentOverride] = useState("");
   const [customerEmailOverride, setCustomerEmailOverride] = useState("");
@@ -79,6 +119,18 @@ export default function ScanRussianDocsTwoModelsPage() {
   const [downloadHref, setDownloadHref] = useState<string | null>(null);
 
   const allFilesSelected = Boolean(files.passportMain && files.passportRegistration && files.egrnExtract);
+  const preparedResult = useMemo<UnifiedScanResponse | null>(() => {
+    if (!result) return null;
+    return {
+      ...result,
+      data: {
+        ...result.data,
+        passport_main: editablePassportData ?? result.data.passport_main,
+        passport_registration: editableRegistrationData ?? result.data.passport_registration,
+        egrn_extract: editableEgrnData ?? result.data.egrn_extract,
+      },
+    };
+  }, [editableEgrnData, editablePassportData, editableRegistrationData, result]);
   const backendFilesDebug = useMemo(
     () => parseRawJson<Record<string, { filename: string; bytes: number; sha256_12: string }>>(
       result?.raw_text._files,
@@ -99,6 +151,9 @@ export default function ScanRussianDocsTwoModelsPage() {
 
   const resetResult = useCallback(() => {
     setResult(null);
+    setEditablePassportData(null);
+    setEditableRegistrationData(null);
+    setEditableEgrnData(null);
     setCustomerAddressOverride("");
     setOwnershipBasisDocumentOverride("");
     setCustomerEmailOverride("");
@@ -140,7 +195,10 @@ export default function ScanRussianDocsTwoModelsPage() {
         egrnExtract: files.egrnExtract,
       });
       setResult(payload);
-      setCustomerAddressOverride(registrationAddress(payload));
+      setEditablePassportData({ ...payload.data.passport_main });
+      setEditableRegistrationData({ ...payload.data.passport_registration });
+      setEditableEgrnData({ ...payload.data.egrn_extract });
+      setCustomerAddressOverride(registrationAddress(payload.data.passport_registration));
       setOwnershipBasisDocumentOverride("");
       setCustomerEmailOverride("");
       setCustomerPhoneOverride("");
@@ -153,12 +211,12 @@ export default function ScanRussianDocsTwoModelsPage() {
   };
 
   const handleBuildContract = async () => {
-    if (!result) return;
+    if (!preparedResult) return;
     setBuildingContract(true);
     setError(null);
     try {
       const contract = await buildContractFromUnifiedJson(
-        result,
+        preparedResult,
         customerAddressOverride,
         ownershipBasisDocumentOverride,
         customerEmailOverride,
@@ -171,6 +229,23 @@ export default function ScanRussianDocsTwoModelsPage() {
     } finally {
       setBuildingContract(false);
     }
+  };
+
+  const handlePassportFieldChange = (key: keyof PassportData, value: string) => {
+    setEditablePassportData((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const handleRegistrationFieldChange = (key: keyof PassportRegistrationData, value: string) => {
+    setEditableRegistrationData((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, [key]: value };
+      setCustomerAddressOverride(registrationAddress(next));
+      return next;
+    });
+  };
+
+  const handleEgrnFieldChange = (key: keyof EgrnExtractData, value: string) => {
+    setEditableEgrnData((prev) => (prev ? { ...prev, [key]: value } : prev));
   };
 
   return (
@@ -278,6 +353,109 @@ export default function ScanRussianDocsTwoModelsPage() {
               </section>
             )}
 
+            {editablePassportData && (
+              <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
+                <h2 className="mb-1 text-lg font-semibold text-black">Данные паспорта для договора</h2>
+                <p className="mb-6 text-sm text-slate-600">
+                  Основной разворот распознан через RussianDocsOCR. Проверьте поля перед созданием договора.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {PASSPORT_FIELDS.map((field) => (
+                    <label key={field.key} className="block rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                        {field.label}
+                      </span>
+                      <input
+                        type="text"
+                        value={String(editablePassportData[field.key] ?? "")}
+                        placeholder={field.placeholder}
+                        onChange={(e) => handlePassportFieldChange(field.key, e.target.value)}
+                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {editableRegistrationData && (
+              <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
+                <h2 className="mb-1 text-lg font-semibold text-black">Данные прописки для договора</h2>
+                <p className="mb-6 text-sm text-slate-600">
+                  Страница прописки распознана двумя моделями. При необходимости поправьте адрес вручную.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {REGISTRATION_FIELDS.map((field) => (
+                    <label
+                      key={field.key}
+                      className={[
+                        "block rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3",
+                        field.key === "address" ? "sm:col-span-2" : "",
+                      ].join(" ")}
+                    >
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                        {field.label}
+                      </span>
+                      <input
+                        type="text"
+                        value={String(editableRegistrationData[field.key] ?? "")}
+                        onChange={(e) => handleRegistrationFieldChange(field.key, e.target.value)}
+                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {editableEgrnData && (
+              <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
+                <h2 className="mb-1 text-lg font-semibold text-black">Данные ЕГРН для договора</h2>
+                <p className="mb-6 text-sm text-slate-600">
+                  ЕГРН распознан двумя моделями. Заполните пустые поля, если модель не уверена.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {EGRN_FIELDS.map((field) => (
+                    <label key={field.key} className="block rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                        {field.label}
+                      </span>
+                      <input
+                        type="text"
+                        value={
+                          Array.isArray(editableEgrnData[field.key])
+                            ? (editableEgrnData[field.key] as string[]).join(", ")
+                            : String(editableEgrnData[field.key] ?? "")
+                        }
+                        onChange={(e) => handleEgrnFieldChange(field.key, e.target.value)}
+                        className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      />
+                    </label>
+                  ))}
+                  <label className="block rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3 sm:col-span-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                      Правообладатели
+                    </span>
+                    <input
+                      type="text"
+                      value={(editableEgrnData.right_holders ?? []).join(", ")}
+                      onChange={(e) =>
+                        setEditableEgrnData((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                right_holders: e.target.value.split(",").map((v) => v.trim()).filter(Boolean),
+                              }
+                            : prev,
+                        )
+                      }
+                      className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm font-medium text-black shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                  </label>
+                </div>
+              </section>
+            )}
+
             <section className="mb-8 rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
               <h2 className="mb-4 text-lg font-semibold text-black">Данные для договора</h2>
               <div className="grid gap-4">
@@ -344,9 +522,9 @@ export default function ScanRussianDocsTwoModelsPage() {
 
             <section className="rounded-3xl border border-slate-200/90 bg-white p-6 shadow-md shadow-slate-900/5 sm:p-8">
               <h2 className="mb-2 text-lg font-semibold text-black">JSON ответа</h2>
-              <p className="mb-4 text-xs text-slate-500">model: {result.model}</p>
+              <p className="mb-4 text-xs text-slate-500">model: {preparedResult?.model}</p>
               <pre className="max-h-[min(560px,60vh)] overflow-auto rounded-2xl border border-slate-200 bg-slate-950 p-4 text-xs leading-relaxed text-slate-100 shadow-inner">
-                {JSON.stringify(result, null, 2)}
+                {JSON.stringify(preparedResult, null, 2)}
               </pre>
             </section>
           </>
