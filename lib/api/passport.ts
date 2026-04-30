@@ -8,6 +8,7 @@ const UNIFIED_TESSERACT_SCAN_API_URL = `${API_BASE_URL}/scan-documents-unified-t
 const UNIFIED_CONTRACT_API_URL = `${API_BASE_URL}/unified-json-to-contract`;
 const PASPREAD_SCAN_API_URL = `${API_BASE_URL}/scan-passport-paspread`;
 const RUSSIAN_DOCS_OCR_SCAN_API_URL = `${API_BASE_URL}/scan-passport-russian-docs-ocr`;
+const RUSSIAN_DOCS_OCR_UNIFIED_SCAN_API_URL = `${API_BASE_URL}/scan-documents-russian-docs-ocr`;
 const DEEPSEEK_QWEN_SCAN_API_URL = `${API_BASE_URL}/scan-passport-deepseek-qwen`;
 
 const HF_SEC = Number(process.env.NEXT_PUBLIC_HF_REQUEST_TIMEOUT_SEC ?? 90);
@@ -15,6 +16,12 @@ const FETCH_TIMEOUT_MS = (10 + HF_SEC + 45) * 1000;
 /** Tesseract: три OCR подряд, без HF */
 const TESSERACT_FETCH_TIMEOUT_MS = Number(
   process.env.NEXT_PUBLIC_TESSERACT_TIMEOUT_MS ?? 180_000,
+);
+const RUSSIAN_DOCS_OCR_FETCH_TIMEOUT_MS = Number(
+  process.env.NEXT_PUBLIC_RUSSIAN_DOCS_OCR_TIMEOUT_MS ?? 420_000,
+);
+const PASPREAD_FETCH_TIMEOUT_MS = Number(
+  process.env.NEXT_PUBLIC_PASPREAD_TIMEOUT_MS ?? 45_000,
 );
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 
@@ -222,7 +229,7 @@ export async function scanPassportPaspread(file: File): Promise<ScanResponse> {
     const response = await fetchWithTimeout(
       PASPREAD_SCAN_API_URL,
       { method: "POST", body: form },
-      TESSERACT_FETCH_TIMEOUT_MS,
+      PASPREAD_FETCH_TIMEOUT_MS,
     );
     console.info("[paspread] response", { ok: response.ok, status: response.status });
     if (!response.ok) {
@@ -235,7 +242,7 @@ export async function scanPassportPaspread(file: File): Promise<ScanResponse> {
     console.error("[paspread] failed", error);
     throw toNetworkError(
       error,
-      `Превышено время ожидания paspread (${Math.round(TESSERACT_FETCH_TIMEOUT_MS / 1000)} с). Проверьте, что uvicorn запущен, Tesseract и rupasportread установлены.`,
+      `Превышено время ожидания paspread (${Math.round(PASPREAD_FETCH_TIMEOUT_MS / 1000)} с). Библиотека часто зависает, если MRZ не найден или фото не подходит.`,
     );
   }
 }
@@ -260,7 +267,7 @@ export async function scanPassportRussianDocsOcr(
     const response = await fetchWithTimeout(
       RUSSIAN_DOCS_OCR_SCAN_API_URL,
       { method: "POST", body: form },
-      TESSERACT_FETCH_TIMEOUT_MS,
+      RUSSIAN_DOCS_OCR_FETCH_TIMEOUT_MS,
     );
     console.info("[russian-docs-ocr] response", { ok: response.ok, status: response.status });
     if (!response.ok) {
@@ -273,7 +280,43 @@ export async function scanPassportRussianDocsOcr(
     console.error("[russian-docs-ocr] failed", error);
     throw toNetworkError(
       error,
-      `Превышено время ожидания RussianDocsOCR (${Math.round(TESSERACT_FETCH_TIMEOUT_MS / 1000)} с). Проверьте установку document_processing и моделей.`,
+      `Превышено время ожидания RussianDocsOCR (${Math.round(RUSSIAN_DOCS_OCR_FETCH_TIMEOUT_MS / 1000)} с). Проверьте установку document_processing и моделей.`,
+    );
+  }
+}
+
+export async function scanDocumentsRussianDocsOcr(files: {
+  passportMain: File;
+  passportRegistration: File;
+  egrnExtract: File;
+}): Promise<UnifiedScanResponse> {
+  console.info("[russian-docs-ocr-unified] request:start", {
+    passportMain: files.passportMain.name,
+    passportRegistration: files.passportRegistration.name,
+    egrnExtract: files.egrnExtract.name,
+  });
+  const form = new FormData();
+  form.append("passport_main", files.passportMain);
+  form.append("passport_registration", files.passportRegistration);
+  form.append("egrn_extract", files.egrnExtract);
+  try {
+    const response = await fetchWithTimeout(
+      RUSSIAN_DOCS_OCR_UNIFIED_SCAN_API_URL,
+      { method: "POST", body: form },
+      RUSSIAN_DOCS_OCR_FETCH_TIMEOUT_MS,
+    );
+    console.info("[russian-docs-ocr-unified] response", { ok: response.ok, status: response.status });
+    if (!response.ok) {
+      throw await toApiErrorFromResponse(response);
+    }
+    const payload = (await response.json()) as UnifiedScanResponse;
+    console.info("[russian-docs-ocr-unified] success", { model: payload.model });
+    return payload;
+  } catch (error: unknown) {
+    console.error("[russian-docs-ocr-unified] failed", error);
+    throw toNetworkError(
+      error,
+      `Превышено время ожидания RussianDocsOCR (${Math.round(RUSSIAN_DOCS_OCR_FETCH_TIMEOUT_MS / 1000)} с). Проверьте backend и optional зависимости RussianDocsOCR.`,
     );
   }
 }
