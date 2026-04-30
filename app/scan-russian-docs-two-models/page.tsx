@@ -57,6 +57,7 @@ const PASSPORT_FIELDS: Array<{ key: keyof PassportData; label: string; placehold
   { key: "birth_place", label: "Место рождения" },
   { key: "gender", label: "Пол" },
 ];
+const PASSPORT_FIELD_KEYS = new Set(PASSPORT_FIELDS.map((field) => field.key));
 
 const REGISTRATION_FIELDS: Array<{ key: keyof PassportRegistrationData; label: string }> = [
   { key: "address", label: "Адрес регистрации полностью" },
@@ -107,6 +108,12 @@ function parseRawJson<T>(value: string | undefined, fallback: T): T {
   }
 }
 
+function passportFieldKey(value: string | undefined): keyof PassportData | null {
+  if (!value) return null;
+  const normalized = value.trim();
+  return PASSPORT_FIELD_KEYS.has(normalized as keyof PassportData) ? (normalized as keyof PassportData) : null;
+}
+
 export default function ScanRussianDocsTwoModelsPage() {
   const [files, setFiles] = useState<Record<UploadKey, File | null>>({
     passportMain: null,
@@ -128,6 +135,7 @@ export default function ScanRussianDocsTwoModelsPage() {
   const [contractBlob, setContractBlob] = useState<Blob | null>(null);
   const [contractFilename, setContractFilename] = useState<string | null>(null);
   const [downloadHref, setDownloadHref] = useState<string | null>(null);
+  const [appliedAiCorrectionCount, setAppliedAiCorrectionCount] = useState(0);
 
   const allFilesSelected = Boolean(files.passportMain && files.passportRegistration && files.egrnExtract);
   const preparedResult = useMemo<UnifiedScanResponse | null>(() => {
@@ -153,8 +161,22 @@ export default function ScanRussianDocsTwoModelsPage() {
     () => parseRawJson<AiValidationResult | null>(result?.raw_text._ai_validation, null),
     [result?.raw_text._ai_validation],
   );
-  const aiCorrections = aiValidation?.corrected_fields ?? {};
-  const aiWarnings = aiValidation?.warnings ?? [];
+  const aiWarnings = useMemo(() => aiValidation?.warnings ?? [], [aiValidation?.warnings]);
+  const aiCorrections = useMemo<Partial<Record<keyof PassportData, string>>>(() => {
+    const corrections: Partial<Record<keyof PassportData, string>> = {};
+    const rawCorrections = aiValidation?.corrected_fields ?? {};
+    Object.entries(rawCorrections).forEach(([key, value]) => {
+      const fieldKey = passportFieldKey(key);
+      if (fieldKey && value) corrections[fieldKey] = String(value);
+    });
+    aiWarnings.forEach((warning) => {
+      const fieldKey = passportFieldKey(warning.field);
+      if (fieldKey && warning.suggestion && !corrections[fieldKey]) {
+        corrections[fieldKey] = warning.suggestion;
+      }
+    });
+    return corrections;
+  }, [aiValidation?.corrected_fields, aiWarnings]);
 
   useEffect(() => {
     if (!contractBlob) {
@@ -178,6 +200,7 @@ export default function ScanRussianDocsTwoModelsPage() {
     setContractBlob(null);
     setContractFilename(null);
     setError(null);
+    setAppliedAiCorrectionCount(0);
   }, []);
 
   const onFileChosen = useCallback(
@@ -266,7 +289,20 @@ export default function ScanRussianDocsTwoModelsPage() {
   };
 
   const applyAiPassportCorrections = () => {
-    setEditablePassportData((prev) => (prev ? { ...prev, ...aiCorrections } : prev));
+    const entries = Object.entries(aiCorrections) as Array<[keyof PassportData, string]>;
+    setEditablePassportData((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      let applied = 0;
+      entries.forEach(([key, value]) => {
+        if (value && next[key] !== value) {
+          next[key] = value;
+          applied += 1;
+        }
+      });
+      setAppliedAiCorrectionCount(applied);
+      return next;
+    });
   };
 
   return (
@@ -397,6 +433,11 @@ export default function ScanRussianDocsTwoModelsPage() {
                         </button>
                       )}
                     </div>
+                    {appliedAiCorrectionCount > 0 && (
+                      <p className="mt-2 text-xs font-semibold text-emerald-700">
+                        Применено исправлений: {appliedAiCorrectionCount}
+                      </p>
+                    )}
                     <ul className="mt-3 space-y-2">
                       {aiWarnings.map((warning, index) => (
                         <li key={`${warning.field ?? "field"}-${index}`} className="rounded-xl bg-white/70 px-3 py-2">
